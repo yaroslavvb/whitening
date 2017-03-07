@@ -1,2 +1,2 @@
 # whitening
-whitening, inspired by Kronecker-factored decomposition
+whitening, inspired by Kronecker-factored appoximation (Jimmy Ba)
