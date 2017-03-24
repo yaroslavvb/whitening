@@ -1,3 +1,6 @@
+# Produce smaller version of MNIST
+# 50 features (7x7+1 constant feature)
+
 import gzip
 import os
 import sys
@@ -105,11 +108,14 @@ def main(_):
   # row-major order so can just use reshape
   train_features = train_data2_.reshape((dsize, 49)).T  # (49, dsize)
 
+  constant_feature = np.ones((1, dsize), dtype=train_features.dtype)
+  train_features = np.append(train_features, constant_feature, axis=0)
+
   train_labels_one_hot = np.zeros((dsize, 10))
   train_labels_one_hot[np.arange(dsize), train_labels] = 1
   train_labels = train_labels_one_hot.T # (10, dsize)
   
-  train_data = np.concatenate((train_features, train_labels)) # (59, dsize)
+  train_data = np.concatenate((train_features, train_labels)) # (50, dsize)
   np.savetxt("mnist_small.csv", train_data, fmt="%d", delimiter=',')
 
 
