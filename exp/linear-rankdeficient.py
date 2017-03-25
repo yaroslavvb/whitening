@@ -112,8 +112,7 @@ def train_pseudoinverse():
     observed_losses.append(loss0)
 
   # from accompanying notebook
-  # [1.04094, 0.510063, 0.249931, 0.122466, 0.0600084, 0.0294041,
-  #  0.014408, 0.00705992, 0.00345936, 0.00169509, 0.000830593...
+  # [1.04094, 0.0, 0.0, ...
   expected_losses = np.loadtxt("linear-rankdeficient-losses-pre-fixed.csv")
   np.testing.assert_allclose(expected_losses[:10],
                             observed_losses[:10], rtol=1e-10, atol=1e-20)
