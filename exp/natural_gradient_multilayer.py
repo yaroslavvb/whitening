@@ -146,5 +146,123 @@ def train_regular():
 
   check_equal(observed_losses, expected_losses)
 
+# convention, X0 is numpy, X is Tensor
+def train_manual():
+  """Train network, with manual backprop."""
+  
+  tf.reset_default_graph()
+
+  # load data into TF
+  XY0 = np.genfromtxt('data/natural_gradient_multilayer_XY0.csv',
+                      delimiter= ",")
+  
+  fs = np.genfromtxt('data/natural_gradient_multilayer_fs.csv',
+                     delimiter= ",").astype(np.int32)
+  n = len(fs)-2    # number of layers
+  
+  X0 = XY0[:-1,:]  # 2 x d
+  Y0 = XY0[-1:,:]  # 1 x d
+  dsize = X0.shape[1]
+  Y_ = tf.placeholder(dtype, shape=Y0.shape, name="Y_holder")
+  Y = tf.Variable(Y_, trainable=False)
+  init_dict={Y_: Y0}
+
+  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                     delimiter= ",")
+  W0s = unflatten(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
+  W0s.insert(0, X0)
+
+  
+  # initialize data + layers
+  # W[0] is input matrix (X), W[n] is last matrix
+  # A[1] has activations for W[1], equal to W[0]=X
+  # A[n+1] has predictions
+  W = [0]*(n+1)   # list of "W" matrices. 
+  A = [0]*(n+2)
+  A[0] = identity(dsize)
+  for i in range(n+1):
+    # fs is off by 2 from common notation, ie W[0] has shape f[0],f[-1]
+    Wi_name = "W"+str(i)
+    Wi_shape = (fs[i+1], fs[i])
+    Wi_holder = tf.placeholder(dtype, shape=Wi_shape, name=Wi_name+"_h")
+    W[i] = tf.Variable(Wi_holder, name=Wi_name, trainable=(i>0))
+    A[i+1] = tf.matmul(W[i], A[i], name="A"+str(i+1))
+    init_dict[Wi_holder] = W0s[i]
+
+  assert len(A) == n+2
+  
+  assert W[0].shape == (2, 10)
+  assert W[1].shape == (2, 2)
+  assert W[2].shape == (2, 2)
+  assert W[3].shape == (1, 2)
+
+  assert X0.shape == (2, 10)
+  assert W0s[1].shape == (2, 2)
+  assert W0s[2].shape == (2, 2)
+  assert W0s[3].shape == (1, 2)
+  
+  assert A[0].shape == (10, 10)
+  assert A[1].shape == (2, 10)
+  assert A[2].shape == (2, 10)
+  assert A[3].shape == (2, 10)
+  assert A[4].shape == (1, 10)
+
+  
+  # input dimensions match
+  assert W[0].get_shape() == X0.shape
+  # output dimensions match
+  assert W[-1].get_shape()[0], W[0].get_shape()[1] == Y0.shape
+  assert A[n+1].get_shape() == Y0.shape
+
+  err = Y - A[n+1]
+  #  loss = (1./(2*dsize))*(err @ tf.transpose(err))
+  loss = tf.reduce_sum(tf.square(err))/(2*dsize)
+  lr = tf.Variable(0.5, dtype=dtype)
+  
+  # create backprop matrices
+  # B[i] has backprop for matrix i
+  B = [0]*(n+1)
+  B[n] = -err/dsize
+  for i in range(n-1, -1, -1):
+    B[i] = tf.matmul(tf.transpose(W[i+1]), B[i+1], name="B"+str(i))
+
+  # Create gradient update. Make copy of variables and split update into
+  # two run calls. Using single set of variables will gives updates that 
+  # occasionally produce wrong results/NaN's because of data race
+  
+  dW = [0]*(n+1)
+  updates1 = [0]*(n+1)  # compute updated value into Wcopy
+  updates2 = [0]*(n+1)  # copy value back into W
+  Wcopy = [0]*(n+1)
+  for i in range(n+1):
+    Wi_name = "Wcopy"+str(i)
+    Wi_shape = (fs[i+1], fs[i])
+    Wi_init = tf.zeros(dtype=dtype, shape=Wi_shape, name=Wi_name+"_init")
+    Wcopy[i] = tf.Variable(Wi_init, name=Wi_name, trainable=False)
+    
+    dW[i] = tf.matmul(B[i], tf.transpose(A[i]), name="dW"+str(i))
+    updates1[i] = Wcopy[i].assign(W[i]-lr*dW[i])
+    updates2[i] = W[i].assign(Wcopy[i])
+
+  del updates1[0]  # don't update input matrices
+  del updates2[0]
+  
+  train_op1 = tf.group(*updates1)
+  train_op2 = tf.group(*updates2)
+
+  sess = tf.Session()
+  sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
+  
+  expected_losses = np.loadtxt("data/natural_gradient_multilayer_losses_regular.csv")
+  
+  observed_losses = []
+  for i in range(20):
+    observed_losses.append(sess.run([loss])[0])
+    sess.run(train_op1)
+    sess.run(train_op2)
+
+  check_equal(observed_losses, expected_losses)
+
 if __name__ == '__main__':
   train_regular()
+  train_manual()
