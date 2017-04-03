@@ -1024,7 +1024,7 @@ def newton_test():
 
 def relu_mask(a):
   from tensorflow.python.ops import gen_nn_ops
-  ones = gen_nn_ops._relu_grad(tf.ones(a.get_shape(), dtype=dtype), a)
+  ones = tf.ones(a.get_shape(), dtype=dtype)
   return gen_nn_ops._relu_grad(ones, a)
 
 def relu_mask_test():
@@ -1103,7 +1103,7 @@ def relu_manual_vectorized_test():
   assert W[-1].get_shape()[0], W[0].get_shape()[1] == Y0.shape
   assert A[n+1].get_shape() == Y0.shape
 
-  err = Y - A[n+1]
+  err = Y - A[n+1] 
   #  loss = (1./(2*dsize))*(err @ tf.transpose(err))
   loss = tf.reduce_sum(tf.square(err))/(2*dsize)
   lr = tf.Variable(0.5, dtype=dtype)
@@ -1166,17 +1166,14 @@ def relu_manual_vectorized_test():
 
 
 if __name__ == '__main__':
-#  relu_manual_vectorized_fisher_run()
   relu_mask_test()
   relu_manual_vectorized_test()
-  sys.exit()
   
   kronecker_test()
   Kmat_test()
   concat_blocks_test()
   #  newton_test()
   natural_gradient_test()
-  sys.exit()
   regular_test()
   regular_manual_test()
   regular_manual_vectorized_test()
@@ -1188,3 +1185,4 @@ if __name__ == '__main__':
   vectorize_tf_test()
   fisher_test()
 
+  sys.exit()
