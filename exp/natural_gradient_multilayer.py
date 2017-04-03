@@ -1022,6 +1022,16 @@ def newton_test():
   check_equal(observed_losses, expected_losses)
 
 
+def relu_mask(a):
+  from tensorflow.python.ops import gen_nn_ops
+  ones = gen_nn_ops._relu_grad(tf.ones(a.get_shape(), dtype=dtype), a)
+  return gen_nn_ops._relu_grad(ones, a)
+
+def relu_mask_test():
+  a = tf.constant([-1,0,1,2], dtype=dtype)
+  sess = tf.Session()
+  check_equal(sess.run(relu_mask(a)), [0,0,1,1])
+    
 # convention, X0 is numpy, X is Tensor
 def relu_manual_vectorized_test():
   """Train network, with manual backprop, in vectorized form"""
@@ -1101,10 +1111,13 @@ def relu_manual_vectorized_test():
   # create backprop matrices
   # B[i] has backprop for matrix i
   B = [0]*(n+1)
-  B[n] = (-err/dsize)*tf.nn.relu(A[n+1])
+  B[n] = (-err/dsize)*relu_mask(A[n+1])
   for i in range(n-1, -1, -1):
     B[i] = tf.matmul(tf.transpose(W[i+1]), B[i+1], name="B"+str(i))
-    B[i] = B[i]*tf.nn.relu(A[i])
+    if i == 0:
+      pass
+    else:
+      B[i] = B[i]*relu_mask(A[i+1])
 
   # Create gradient update. Make copy of variables and split update into
   # two run calls. Using single set of variables will gives updates that 
@@ -1153,6 +1166,8 @@ def relu_manual_vectorized_test():
 
 
 if __name__ == '__main__':
+#  relu_manual_vectorized_fisher_run()
+  relu_mask_test()
   relu_manual_vectorized_test()
   sys.exit()
   
