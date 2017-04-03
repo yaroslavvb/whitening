@@ -84,6 +84,9 @@ def unvectorize_tf_test():
   result = sess.run(unvectorize_tf(vec, 2))
   assert (result==[[1,3,5],[2,4,6]]).all()
 
+def vectorize(mat):
+  return np.reshape(np.transpose(mat), [-1,])
+
 def vectorize_tf(mat):
   return tf.reshape(tf.transpose(mat), [-1,])
 
@@ -91,7 +94,31 @@ def vectorize_tf_test():
   mat = tf.constant([[1, 3, 5], [2, 4, 6]])
   sess = tf.Session()
   check_equal(sess.run(vectorize_tf(mat)), [1,2,3,4,5,6])
-  
+
+
+def Kmat(rows, cols):
+  """Commutation matrix. Kmat(a,b).vec(M) takes vec of a,b matrix M to vec of
+  its transpose."""
+  input_mat = np.reshape(np.arange(rows*cols),[rows,-1]).astype(np.int32)
+  output_mat = input_mat.T
+    
+  input_vec = vectorize(input_mat)
+  output_vec = vectorize(output_mat)
+    
+  K = np.zeros((rows*cols, rows*cols), dtype=np.int32)
+  for output_idx in range(rows*cols):
+    for input_idx in range(rows*cols):
+      K[output_idx, input_idx] = (output_vec[output_idx] == input_vec[input_idx])
+  return K
+
+def Kmat_test():
+  check_equal(Kmat(3,2),
+              [[1, 0, 0, 0, 0, 0],
+               [0, 0, 0, 1, 0, 0],
+               [0, 1, 0, 0, 0, 0],
+               [0, 0, 0, 0, 1, 0],
+               [0, 0, 1, 0, 0, 0],
+               [0, 0, 0, 0, 0, 1]])
 
 # turns flattened representation into list of matrices with given matrix
 # sizes
@@ -487,9 +514,24 @@ def kronecker_cols_test():
   sess = tf.Session()
   assert sess.run(tf.equal(kronecker_cols(a, b), c)).all()
 
-# def kronecker(A, B):
-#   pass
+def kronecker(A, B):
+  bits = []
+  for i in range(A.shape[0]):
+    for j in range(A.shape[1]):
+      bits.append(tf.reshape(A[i,j]*B, [-1]))
+  flat_result = tf.concat(bits, axis=0)
+  new_shape = [int(A.shape[0]*B.shape[0]), int(A.shape[1]*B.shape[1])]
+  return tf.reshape(flat_result, new_shape)
 
+kr = kronecker
+
+def kronecker_test():
+  A = tf.constant([[1,2],[3,4]])
+  B = tf.constant([[6,7]])
+  C = kronecker(A, B)
+  sess = tf.Session()
+  C0 = sess.run(C)
+  check_equal(C0, [[6, 7, 12, 14], [18, 21, 24, 28]])
 
 
 # def merge_mats(mats):
@@ -784,8 +826,340 @@ def natural_gradient_test():
 
   check_equal(observed_losses, expected_losses)
 
+def t(x):
+  return tf.transpose(x)
+
+
+def concat_blocks(blocks):
+  col_dims = np.array([[int(b.shape[1]) for b in row] for row in blocks])
+  col_sums = col_dims.sum(1)
+  assert (col_sums[0] == col_sums).all()
+  row_dims = np.array([[int(b.shape[0]) for b in row] for row in blocks])
+  row_sums = row_dims.sum(0)
+  assert (row_sums[0] == row_sums).all()
+  
+  new_cols = col_sums[0]
+  new_rows = row_sums[0]
+  
+  block_rows = [tf.concat(row, axis=1) for row in blocks]
+  return tf.concat(block_rows, axis=0)
+
+def concat_blocks_test():
+  blocks = [[tf.constant([[1]]), tf.constant([[1,2]])],
+            [tf.transpose(tf.constant([[1,2]])), tf.constant([[1,2],[3,4]])]]
+  result = concat_blocks(blocks)
+  sess = tf.Session()
+  result0 = sess.run(result)
+  check_equal(result0, [[1, 1, 2], [1, 1, 2], [2, 3, 4]])
+  
+def newton_test():
+  """Test Newton-Rhapson implementation """
+  
+  tf.reset_default_graph()
+
+  # load data into TF
+  XY0 = np.genfromtxt('data/natural_gradient_multilayer_XY0.csv',
+                      delimiter= ",")
+  
+  fs = np.genfromtxt('data/natural_gradient_multilayer_fs.csv',
+                     delimiter= ",").astype(np.int32)
+  def f(i): return fs[i+1]
+  
+  n = len(fs)-2    # number of layers
+  
+  X0 = XY0[:-1,:]  # 2 x d
+  Y0 = XY0[-1:,:]  # 1 x d
+  dsize = X0.shape[1]
+  Y_ = tf.placeholder(dtype, shape=Y0.shape, name="Y_holder")
+  Y = tf.Variable(Y_, trainable=False)
+  init_dict={Y_: Y0}
+
+  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                     delimiter= ",")
+  W0s = unflatten(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
+  W0s.insert(0, X0)
+
+  
+  # initialize data + layers
+  # W[0] is input matrix (X), W[n] is last matrix
+  # A[1] has activations for W[1], equal to W[0]=X
+  # A[n+1] has predictions
+  W = [0]*(n+1)   # list of "W" matrices. 
+  A = [0]*(n+2)
+  A[0] = identity(dsize)
+
+  dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
+  sizes = [s[0]*s[1] for s in dims]
+  Wf_size = np.sum(sizes[1:])
+  Wf_holder = tf.placeholder(dtype, shape=(Wf_size,))
+  Wf = tf.Variable(Wf_holder, name="Wf")
+  assert Wf.shape == W0f.shape
+  init_dict[Wf_holder] = W0f
+  
+  W = unflatten_tf(Wf, fs[1:])
+  W.insert(0, tf.constant(X0))
+  assert W[0].shape == [2, 10]
+  assert W[1].shape == [2, 2]
+  assert W[2].shape == [2, 2]
+  assert W[3].shape == [1, 2]
+                   
+  for i in range(n+1):
+    # fs is off by 2 from common notation, ie W[0] has shape f[0],f[-1]
+    A[i+1] = tf.matmul(W[i], A[i], name="A"+str(i+1))
+    
+  assert len(A) == n+2
+  assert A[0].shape == (10, 10)
+  assert A[1].shape == (2, 10)
+  assert A[2].shape == (2, 10)
+  assert A[3].shape == (2, 10)
+  assert A[4].shape == (1, 10)
+
+  
+  # input dimensions match
+  assert W[0].get_shape() == X0.shape
+  # output dimensions match
+  assert W[-1].get_shape()[0], W[0].get_shape()[1] == Y0.shape
+  assert A[n+1].get_shape() == Y0.shape
+
+  err = Y - A[n+1]
+  #  loss = (1./(2*dsize))*(err @ tf.transpose(err))
+  loss = tf.reduce_sum(tf.square(err))/(2*dsize)
+  lr = tf.Variable(0.001, dtype=dtype)
+  
+  # create backprop matrices
+  # B[i] has backprop for matrix i
+  B = [0]*(n+1)
+  b = [0]*(n+1)  # like backprop matrix but no error
+  B[n] = -err/dsize
+  b[n] = identity(fs[-1])
+  for i in range(n-1, -1, -1):
+    B[i] = t(W[i+1]) @ B[i+1]
+    b[i] = t(W[i+1]) @ b[i+1]
+
+
+  # off-diagonal products
+  U = [list(range(n+1)) for _ in range(n+1)]
+  for bottom in range(n+1):
+    for top in range(n+1):
+      prod = identity(fs[top+1])
+      for i in range(top, bottom-1, -1):
+        prod = prod @ W[i]
+      U[bottom][top] = prod
+
+  # block i, j gives hessian block between layer i and layer j
+  block = [list(range(n+1)) for _ in range(n+1)]
+  for i in range(1, n+1):
+    for j in range(1, n+1):
+      if i == j:
+        block[i][j] = kronecker(A[i]@t(A[i]), b[i]@t(b[i]))/dsize
+      elif i < j:
+        block[i][j] = (kr(A[i]@t(A[j]), b[i]@t(b[j])) -
+                       kr((A[i]@t(B[j])), U[i+1][j-1]) @ Kmat(f(j),f(j-1)))
+      else:
+        block[i][j] = (kr(A[i]@t(A[j]), b[i]@t(b[j])) -
+                       kr(t(U[j+1][i-1]), B[i]@t(A[j])) @ Kmat(f(j),f(j-1)))
+        
+  # remove leftmost blocks (those are with respect to W[0] which is input)
+  del block[0]
+  for row in block:
+    del row[0]
+    
+  hess = concat_blocks(block)
+  # Create gradient update. Make copy of variables and split update into
+  # two run calls. Using single set of variables will gives updates that 
+  # occasionally produce wrong results/NaN's because of data race
+  
+  dW = [0]*(n+1)
+  updates1 = [0]*(n+1)  # compute updated value into Wcopy
+  updates2 = [0]*(n+1)  # copy value back into W
+  Wcopy = [0]*(n+1)
+  for i in range(n+1):
+    Wi_name = "Wcopy"+str(i)
+    Wi_shape = (fs[i+1], fs[i])
+    Wi_init = tf.zeros(dtype=dtype, shape=Wi_shape, name=Wi_name+"_init")
+    Wcopy[i] = tf.Variable(Wi_init, name=Wi_name, trainable=False)
+    
+    dW[i] = tf.matmul(B[i], tf.transpose(A[i]), name="dW"+str(i))
+
+
+  del dW[0]  # get rid of W[0] update
+  
+  # construct flattened gradient update vector
+  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+
+
+  # inverse fisher preconditioner
+  grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
+  fisher = grads @ tf.transpose(grads) / dsize
+  ifisher = pseudo_inverse(fisher)
+
+  Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
+                                 name="Wf_copy_init"),
+                        name="Wf_copy")
+  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
+  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  train_op2 = Wf.assign(Wf_copy)
+
+  sess = tf.Session()
+  sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
+  
+  expected_losses = np.loadtxt("data/natural_gradient_multilayer_losses_newton.csv")
+
+  expected_hess = np.loadtxt("data/natural_gradient_multilayer_hess0.csv",
+                             delimiter= ",")
+  hess0 = sess.run(hess)
+  np.savetxt("data/natural_gradient_multilayer_hess0_tf.csv", hess0,
+             fmt="%.5f", delimiter=',')
+  check_equal(expected_hess, sess.run(hess))
+
+  
+  observed_losses = []
+  for i in range(20):
+    observed_losses.append(sess.run([loss])[0])
+    sess.run(train_op1)
+    sess.run(train_op2)
+
+  check_equal(observed_losses, expected_losses)
+
+
+# convention, X0 is numpy, X is Tensor
+def relu_manual_vectorized_test():
+  """Train network, with manual backprop, in vectorized form"""
+  
+  tf.reset_default_graph()
+
+  # load data into TF
+  XY0 = np.genfromtxt('data/natural_gradient_multilayer_XY0.csv',
+                      delimiter= ",")
+  
+  fs = np.genfromtxt('data/natural_gradient_multilayer_fs.csv',
+                     delimiter= ",").astype(np.int32)
+  n = len(fs)-2    # number of layers
+  
+  X0 = XY0[:-1,:]  # 2 x d
+  Y0 = XY0[-1:,:]  # 1 x d
+  dsize = X0.shape[1]
+  Y_ = tf.placeholder(dtype, shape=Y0.shape, name="Y_holder")
+  Y = tf.Variable(Y_, trainable=False)
+  init_dict={Y_: Y0}
+
+  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                     delimiter= ",")
+  W0s = unflatten(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
+  W0s.insert(0, X0)
+
+  
+  # initialize data + layers
+  # W[0] is input matrix (X), W[n] is last matrix
+  # A[1] has activations for W[1], equal to W[0]=X
+  # A[n+1] has predictions
+  W = [0]*(n+1)   # list of "W" matrices. 
+  A = [0]*(n+2)
+  A[0] = identity(dsize)
+
+  dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
+  sizes = [s[0]*s[1] for s in dims]
+  Wf_size = np.sum(sizes[1:])
+  Wf_holder = tf.placeholder(dtype, shape=(Wf_size,))
+  Wf = tf.Variable(Wf_holder, name="Wf")
+  assert Wf.shape == W0f.shape
+  init_dict[Wf_holder] = W0f
+  
+  W = unflatten_tf(Wf, fs[1:])
+  W.insert(0, tf.constant(X0))
+  assert W[0].shape == [2, 10]
+  assert W[1].shape == [2, 2]
+  assert W[2].shape == [2, 2]
+  assert W[3].shape == [1, 2]
+                   
+  for i in range(n+1):
+    # fs is off by 2 from common notation, ie W[0] has shape f[0],f[-1]
+    if i == 0:
+      A[i+1] = tf.matmul(W[i], A[i], name="A"+str(i+1))
+    else:
+      A[i+1] = tf.nn.relu(tf.matmul(W[i], A[i], name="A"+str(i+1)))
+    
+  assert len(A) == n+2
+  assert A[0].shape == (10, 10)
+  assert A[1].shape == (2, 10)
+  assert A[2].shape == (2, 10)
+  assert A[3].shape == (2, 10)
+  assert A[4].shape == (1, 10)
+
+  
+  # input dimensions match
+  assert W[0].get_shape() == X0.shape
+  # output dimensions match
+  assert W[-1].get_shape()[0], W[0].get_shape()[1] == Y0.shape
+  assert A[n+1].get_shape() == Y0.shape
+
+  err = Y - A[n+1]
+  #  loss = (1./(2*dsize))*(err @ tf.transpose(err))
+  loss = tf.reduce_sum(tf.square(err))/(2*dsize)
+  lr = tf.Variable(0.5, dtype=dtype)
+  
+  # create backprop matrices
+  # B[i] has backprop for matrix i
+  B = [0]*(n+1)
+  B[n] = (-err/dsize)*tf.nn.relu(A[n+1])
+  for i in range(n-1, -1, -1):
+    B[i] = tf.matmul(tf.transpose(W[i+1]), B[i+1], name="B"+str(i))
+    B[i] = B[i]*tf.nn.relu(A[i])
+
+  # Create gradient update. Make copy of variables and split update into
+  # two run calls. Using single set of variables will gives updates that 
+  # occasionally produce wrong results/NaN's because of data race
+  
+  dW = [0]*(n+1)
+  updates1 = [0]*(n+1)  # compute updated value into Wcopy
+  updates2 = [0]*(n+1)  # copy value back into W
+  Wcopy = [0]*(n+1)
+  for i in range(n+1):
+    Wi_name = "Wcopy"+str(i)
+    Wi_shape = (fs[i+1], fs[i])
+    Wi_init = tf.zeros(dtype=dtype, shape=Wi_shape, name=Wi_name+"_init")
+    Wcopy[i] = tf.Variable(Wi_init, name=Wi_name, trainable=False)
+    
+    dW[i] = tf.matmul(B[i], tf.transpose(A[i]), name="dW"+str(i))
+
+
+  del dW[0]  # get rid of W[0] update
+  
+  # construct flattened gradient update vector
+  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+
+  Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
+                                 name="Wf_copy_init"),
+                        name="Wf_copy")
+  train_op1 = Wf_copy.assign(Wf - lr*dWf)
+  train_op2 = Wf.assign(Wf_copy)
+
+  sess = tf.Session()
+  sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
+  
+  expected_losses = np.loadtxt("data/relu_losses_regular.csv")
+  # from relus.nb
+  #  {0.539407, 0.256027, 0.25684, 0.248212, 0.247842, 0.244276, 0.243793...
+
+  
+  observed_losses = []
+  for i in range(20):
+    observed_losses.append(sess.run([loss])[0])
+    sess.run(train_op1)
+    sess.run(train_op2)
+
+  np.testing.assert_allclose(observed_losses, expected_losses)
+  check_equal(observed_losses, expected_losses)
+
 
 if __name__ == '__main__':
+  relu_manual_vectorized_test()
+  sys.exit()
+  
+  kronecker_test()
+  Kmat_test()
+  concat_blocks_test()
+  #  newton_test()
   natural_gradient_test()
   sys.exit()
   regular_test()
@@ -798,3 +1172,4 @@ if __name__ == '__main__':
   unflatten_tf_test()
   vectorize_tf_test()
   fisher_test()
+
