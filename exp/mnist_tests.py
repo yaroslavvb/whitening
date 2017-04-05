@@ -7,239 +7,7 @@ dtype = np.float64
 
 DISABLE_RELU = True     # hack to turn off all relus
 
-def relu(a):
-  if DISABLE_RELU:
-    return a
-  return tf.relu(a)
-  
-def relu_mask(a):
-  from tensorflow.python.ops import gen_nn_ops
-  ones = tf.ones(a.get_shape(), dtype=dtype)
-  if DISABLE_RELU:
-    return ones
-  return gen_nn_ops._relu_grad(ones, a)
-
-def pseudo_inverse(mat):
-  s, u, v = tf.svd(mat)
-  eps = 1e-10   # zero threshold for eigenvalues
-  si = tf.where(tf.less(s, eps), s, 1./s)
-  return u @ tf.diag(si) @ tf.transpose(v)
-
-def symsqrt(mat):
-  s, u, v = tf.svd(mat)
-  eps = 1e-10   # zero threshold for eigenvalues
-  si = tf.where(tf.less(s, eps), s, tf.sqrt(s))
-  return u @ tf.diag(si) @ tf.transpose(v)
-
-def pseudo_inverse_sqrt(mat):
-  s, u, v = tf.svd(mat)
-  eps = 1e-10   # zero threshold for eigenvalues
-  si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
-  return u @ tf.diag(si) @ tf.transpose(v)
-
-def identity(n):
-  return tf.diag(tf.ones((n,), dtype=dtype))
-
-
-# partitions numpy array into sublists of given sizes
-def partition(vec, sizes):
-  assert np.sum(sizes) == len(vec)
-  splits = []
-  current_idx = 0
-  for i in range(len(sizes)):
-    splits.append(vec[current_idx: current_idx+sizes[i]])
-    current_idx += sizes[i]
-  assert current_idx == len(vec)
-  return splits
-
-
-def partition_tf(vec, sizes):
-  assert len(vec.shape) == 1
-  assert np.sum(sizes) == vec.shape[0]
-  splits = []
-  current_idx = 0
-  for i in range(len(sizes)):
-    splits.append(vec[current_idx: current_idx+sizes[i]])
-    current_idx += sizes[i]
-  return splits
-
-
-def partition_tf_test():
-  vec = tf.constant([1,2,3,4,5])
-  sess = tf.Session()
-  result = sess.run(partition_tf(vec, [3, 2]))
-  check_equal(result[0], [1,2,3])
-  assert (result[1] == [4,5]).all()
-
-  
-def v2c_tf(vec):
-  """Converts vector to column matrix."""
-  return tf.expand_dims(vec, 1)
-
-def v2r_tf(vec):
-  """Converts vector into row matrix."""
-  return tf.expand_dims(vec, 0)
-  
-def c2v_tf(col):
-  """Converts vector into row matrix."""
-  return tf.reshape(col, [-1])
-  
-def unvectorize(vec, rows):
-  """Turns vectorized version of tensor into original matrix with given
-  number of rows."""
-  assert len(vec)%rows==0
-  cols = len(vec)//rows;
-  return np.array(np.split(vec, cols)).T
-
-def unvectorize_tf(vec, rows):
-  assert len(vec.shape) == 1
-  assert vec.shape[0]%rows == 0
-  cols = int(vec.shape[0]//rows) 
-  cols = [v2r_tf(v) for v in tf.split(vec, cols)]
-  return tf.transpose(tf.concat(cols, 0))
-
-def unvectorize_tf_test():
-  vec = tf.constant([1,2,3,4,5,6])
-  sess = tf.Session()
-  result = sess.run(unvectorize_tf(vec, 2))
-  assert (result==[[1,3,5],[2,4,6]]).all()
-
-def vectorize(mat):
-  return np.reshape(np.transpose(mat), [-1,])
-
-def vectorize_tf(mat):
-  return tf.reshape(tf.transpose(mat), [-1,])
-
-def vectorize_tf_test():
-  mat = tf.constant([[1, 3, 5], [2, 4, 6]])
-  sess = tf.Session()
-  check_equal(sess.run(vectorize_tf(mat)), [1,2,3,4,5,6])
-
-
-def Kmat(rows, cols):
-  """Commutation matrix. Kmat(a,b).vec(M) takes vec of a,b matrix M to vec of
-  its transpose."""
-  input_mat = np.reshape(np.arange(rows*cols),[rows,-1]).astype(np.int32)
-  output_mat = input_mat.T
-    
-  input_vec = vectorize(input_mat)
-  output_vec = vectorize(output_mat)
-    
-  K = np.zeros((rows*cols, rows*cols), dtype=np.int32)
-  for output_idx in range(rows*cols):
-    for input_idx in range(rows*cols):
-      K[output_idx, input_idx] = (output_vec[output_idx] == input_vec[input_idx])
-  return K
-
-def Kmat_test():
-  check_equal(Kmat(3,2),
-              [[1, 0, 0, 0, 0, 0],
-               [0, 0, 0, 1, 0, 0],
-               [0, 1, 0, 0, 0, 0],
-               [0, 0, 0, 0, 1, 0],
-               [0, 0, 1, 0, 0, 0],
-               [0, 0, 0, 0, 0, 1]])
-
-# turns flattened representation into list of matrices with given matrix
-# sizes
-def unflatten(Wf, fs):
-  dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
-  sizes = [s[0]*s[1] for s in dims]
-  assert np.sum(sizes)==len(Wf)
-  Wsf = partition(Wf, sizes)
-  Ws = [unvectorize(Wsf[i], dims[i][0]) for i in range(len(sizes))]
-  return Ws
-
-# Turns flattened Tensor into list of rank-2 tensors with given sizes
-def unflatten_tf(Wf, fs):
-  dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
-  sizes = [s[0]*s[1] for s in dims]
-  assert len(Wf.shape) == 1
-  assert np.sum(sizes)==Wf.shape[0]
-  Wsf = partition_tf(Wf, sizes)
-  Ws = [unvectorize_tf(Wsf[i], dims[i][0]) for i in range(len(sizes))]
-  return Ws
-
-def unflatten_tf_test():
-  vec = tf.constant(list(range(1, 11)))
-  sess = tf.Session()
-  fs = [2,2,2,1]
-  result = sess.run(unflatten_tf(vec, fs))
-  check_equal(result[0], [[1,3],[2,4]])
-  check_equal(result[1], [[5,7],[6,8]])
-  check_equal(result[2], [[9, 10]])
-
-
-def check_equal(a, b, rtol=1e-12, atol=1e-12):
-  try:
-    np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
-  except Exception as e:
-    print("Error" + "-"*60)
-    for line in traceback.format_stack():
-      print(line.strip())
-        
-    # exc_type, exc_value, exc_traceback = sys.exc_info()
-    # print("*** print_tb:")
-    # traceback.print_tb(exc_traceback, limit=10, file=sys.stdout)
-    # efmt = traceback.format_exc()
-    # print(efmt)
-
-def kronecker_cols(a, b):
-  """Treats rank-1 vectors a, b as columns, returns Kronecker product a x b."""
-  
-  assert len(a.get_shape())==1, "Input a must be rank-1, got shape %s" %(a.get_shape(),)
-  assert len(b.get_shape())==1, "Input b must be rank-1, got shape %s"%(a.get_shape(),)
-  segments = []
-  for i in range(a.get_shape()[0]):
-    segments.append(a[i]*b)
-  result_vec = tf.concat(segments, axis=0)
-  result_col = tf.expand_dims(result_vec, 1)
-  return result_col
-
-def kronecker_cols_test():
-  a = tf.constant([1,2])
-  b = tf.constant([3,4])
-  c = tf.transpose(tf.constant([[3,4,6,8]]))
-  sess = tf.Session()
-  assert sess.run(tf.equal(kronecker_cols(a, b), c)).all()
-
-def kronecker(A, B):
-  bits = []
-  for i in range(A.shape[0]):
-    for j in range(A.shape[1]):
-      bits.append(tf.reshape(A[i,j]*B, [-1]))
-  flat_result = tf.concat(bits, axis=0)
-  new_shape = [int(A.shape[0]*B.shape[0]), int(A.shape[1]*B.shape[1])]
-  return tf.reshape(flat_result, new_shape)
-
-kr = kronecker
-
-def kronecker_test():
-  A = tf.constant([[1,2],[3,4]])
-  B = tf.constant([[6,7]])
-  C = kronecker(A, B)
-  sess = tf.Session()
-  C0 = sess.run(C)
-  check_equal(C0, [[6, 7, 12, 14], [18, 21, 24, 28]])
-
-
-def col(A,i):
-  """Extracts i'th column of matrix A"""
-  assert len(A.get_shape())==2
-  assert i>=0 and i < A.get_shape()[1]
-  return tf.expand_dims(A[:,i], 1)
-
-
-def khatri_rao(A, B):
-  """Khatri rao product of matrices A,B"""
-
-  cols = []
-  assert len(A.get_shape()) == 2, "A must be rank-1, got shape %s" %(a.get_shape(),)
-  assert A.get_shape()[1] == B.get_shape()[1]
-  for i in range(A.get_shape()[1]):
-    cols.append(kronecker_cols(A[:, i], B[:,i]))
-  return tf.concat(cols, axis=1)
-
+from util import *
 
 def train_tiny():
   """Train network, with manual backprop, in vectorized form"""
@@ -263,7 +31,7 @@ def train_tiny():
 
   W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
                      delimiter= ",")
-  W0s = unflatten(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
+  W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
   
@@ -283,7 +51,7 @@ def train_tiny():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   W.insert(0, tf.constant(X0))
   assert W[0].shape == [2, 10]
   assert W[1].shape == [2, 2]
@@ -347,7 +115,7 @@ def train_tiny():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
@@ -357,8 +125,8 @@ def train_tiny():
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
   fisher = grads @ tf.transpose(grads) / dsize
   ifisher = pseudo_inverse(fisher)
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -372,7 +140,7 @@ def train_tiny():
     sess.run(train_op1)
     sess.run(train_op2)
 
-    #  print(observed_losses)
+  print(observed_losses)
 
 def mnist1000_test():
   do_relu = False
@@ -406,8 +174,8 @@ def mnist1000_test():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
-  W0s = unflatten(W0f, fs[1:])
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -416,7 +184,7 @@ def mnist1000_test():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -476,7 +244,7 @@ def mnist1000_test():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
@@ -539,9 +307,9 @@ def mnist1000_fisher():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
   #  W0f = np.ones((500,), dtype=dtype)
-  W0s = unflatten(W0f, fs[1:])
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -550,7 +318,7 @@ def mnist1000_fisher():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -610,7 +378,7 @@ def mnist1000_fisher():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
@@ -622,8 +390,8 @@ def mnist1000_fisher():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -686,9 +454,9 @@ def mnist1000_fisher2():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
   #  W0f = np.ones((500,), dtype=dtype)
-  W0s = unflatten(W0f, fs[1:])
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -697,7 +465,7 @@ def mnist1000_fisher2():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -757,7 +525,7 @@ def mnist1000_fisher2():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
@@ -769,8 +537,8 @@ def mnist1000_fisher2():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -833,9 +601,9 @@ def mnist1000_fisher3():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
   #  W0f = np.ones((500,), dtype=dtype)
-  W0s = unflatten(W0f, fs[1:])
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -844,7 +612,7 @@ def mnist1000_fisher3():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -904,7 +672,7 @@ def mnist1000_fisher3():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
@@ -916,8 +684,8 @@ def mnist1000_fisher3():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -980,9 +748,9 @@ def mnist1000_fisher4():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
   W0f = np.ones((500,), dtype=dtype)/500.
-  W0s = unflatten(W0f, fs[1:])
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -991,7 +759,7 @@ def mnist1000_fisher4():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -1051,7 +819,7 @@ def mnist1000_fisher4():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
@@ -1063,8 +831,8 @@ def mnist1000_fisher4():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -1127,9 +895,9 @@ def mnist1000_fisher5():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
   W0f = np.ones((500,), dtype=dtype)/500.
-  W0s = unflatten(W0f, fs[1:])
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -1138,7 +906,7 @@ def mnist1000_fisher5():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -1198,7 +966,7 @@ def mnist1000_fisher5():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
@@ -1211,8 +979,8 @@ def mnist1000_fisher5():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -1276,11 +1044,11 @@ def mnist1000_fisher6():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
 
-  W0f = np.concatenate([W0f, vectorize(np.identity(10))])
+  W0f = np.concatenate([W0f, vectorize_np(np.identity(10))])
   #  W0f = np.ones((500,), dtype=dtype)
-  W0s = unflatten(W0f, fs[1:])
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -1289,7 +1057,7 @@ def mnist1000_fisher6():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -1349,7 +1117,7 @@ def mnist1000_fisher6():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
@@ -1361,8 +1129,8 @@ def mnist1000_fisher6():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -1425,12 +1193,12 @@ def mnist1000_fisher7():
   sizes = [s[0]*s[1] for s in dims]
   print("shapes are ", dims)
 
-  W0f = vectorize(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
+  W0f = vectorize_np(np.concatenate((np.zeros([f1-1, f2]), np.ones([1, f2])/f2)).T)
 
-  W0f = np.concatenate([W0f, vectorize(np.identity(10))])
-  W0f = np.concatenate([W0f, vectorize(np.identity(10))])
+  W0f = np.concatenate([W0f, vectorize_np(np.identity(10))])
+  W0f = np.concatenate([W0f, vectorize_np(np.identity(10))])
   #  W0f = np.ones((500,), dtype=dtype)
-  W0s = unflatten(W0f, fs[1:])
+  W0s = unflatten_np(W0f, fs[1:])
   W0s.insert(0, X0)
   
   Wf_size = np.sum(sizes[1:])
@@ -1439,7 +1207,7 @@ def mnist1000_fisher7():
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
   
-  W = unflatten_tf(Wf, fs[1:])
+  W = unflatten(Wf, fs[1:])
   print("W vars are %s"%([v.get_shape() for v in W]))
   W.insert(0, tf.constant(X0))
   print("W vars are now %s"%([v.get_shape() for v in W]))
@@ -1499,7 +1267,7 @@ def mnist1000_fisher7():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize_tf(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
 
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
@@ -1511,8 +1279,8 @@ def mnist1000_fisher7():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -1540,7 +1308,7 @@ def mnist1000_fisher7():
 
 
 if __name__ == '__main__':
-  #  train_tiny()
+  train_tiny()
   #  mnist1000_test()
   #  mnist1000_fisher()
   #  mnist1000_fisher2()
@@ -1559,4 +1327,4 @@ if __name__ == '__main__':
   #  mnist1000_fisher6()
 
   # add another hidden layer (4 matmuls total)
-  mnist1000_fisher7()
+  #  mnist1000_fisher7()
