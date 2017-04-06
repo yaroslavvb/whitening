@@ -50,7 +50,7 @@ def gd_test():
   # initialize data + layers
   W = []   # list of "W" matrices. W[0] is input matrix (X), W[n] is last matrix
   Wi_holders = []
-  A = [identity(dsize)]   # activation matrices
+  A = [Identity(dsize)]   # activation matrices
   for i in range(n+1):
     # fs is off by 2 from common notation, ie W[0] has shape f[0],f[-1]
     Wi_name = "W"+str(i)
@@ -144,7 +144,7 @@ def gd_manual_test():
   # A[n+1] has predictions
   W = [0]*(n+1)   # list of "W" matrices. 
   A = [0]*(n+2)
-  A[0] = identity(dsize)
+  A[0] = Identity(dsize)
   for i in range(n+1):
     # fs is off by 2 from common notation, ie W[0] has shape f[0],f[-1]
     Wi_name = "W"+str(i)
@@ -261,7 +261,7 @@ def gd_manual_vectorized_test():
   # A[n+1] has predictions
   W = [0]*(n+1)   # list of "W" matrices. 
   A = [0]*(n+2)
-  A[0] = identity(dsize)
+  A[0] = Identity(dsize)
 
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
@@ -384,7 +384,7 @@ def fisher_test():
   # A[n+1] has predictions
   W = [0]*(n+1)   # list of "W" matrices. 
   A = [0]*(n+2)
-  A[0] = identity(dsize)
+  A[0] = Identity(dsize)
   for i in range(n+1):
     # fs is off by 2 from common notation, ie W[0] has shape f[0],f[-1]
     Wi_name = "W"+str(i)
@@ -517,7 +517,7 @@ def natural_gradient_test():
   # A[n+1] has predictions
   W = [0]*(n+1)   # list of "W" matrices. 
   A = [0]*(n+2)
-  A[0] = identity(dsize)
+  A[0] = Identity(dsize)
 
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
@@ -595,8 +595,8 @@ def natural_gradient_test():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -648,7 +648,7 @@ def newton_test():
   # A[n+1] has predictions
   W = [0]*(n+1)   # list of "W" matrices. 
   A = [0]*(n+2)
-  A[0] = identity(dsize)
+  A[0] = Identity(dsize)
 
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
@@ -693,7 +693,7 @@ def newton_test():
   B = [0]*(n+1)
   b = [0]*(n+1)  # like backprop matrix but no error
   B[n] = -err/dsize
-  b[n] = identity(fs[-1])
+  b[n] = Identity(fs[-1])
   for i in range(n-1, -1, -1):
     B[i] = t(W[i+1]) @ B[i+1]
     b[i] = t(W[i+1]) @ b[i+1]
@@ -703,7 +703,7 @@ def newton_test():
   U = [list(range(n+1)) for _ in range(n+1)]
   for bottom in range(n+1):
     for top in range(n+1):
-      prod = identity(fs[top+1])
+      prod = Identity(fs[top+1])
       for i in range(top, bottom-1, -1):
         prod = prod @ W[i]
       U[bottom][top] = prod
@@ -758,8 +758,8 @@ def newton_test():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c_tf(Wf) - lr*(ifisher @ v2c_tf(dWf))
-  train_op1 = Wf_copy.assign(c2v_tf(new_val_matrix))
+  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
+  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -816,7 +816,7 @@ def relu_manual_vectorized_test():
   # A[n+1] has predictions
   W = [0]*(n+1)   # list of "W" matrices. 
   A = [0]*(n+2)
-  A[0] = identity(dsize)
+  A[0] = Identity(dsize)
 
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
