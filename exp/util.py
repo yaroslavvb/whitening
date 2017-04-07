@@ -15,9 +15,6 @@ def concat_blocks(blocks):
   row_sums = row_dims.sum(0)
   assert (row_sums[0] == row_sums).all()
   
-  new_cols = col_sums[0]
-  new_rows = row_sums[0]
-  
   block_rows = [tf.concat(row, axis=1) for row in blocks]
   return tf.concat(block_rows, axis=0)
 
@@ -38,11 +35,22 @@ def pseudo_inverse(mat, eps=1e-10):
   si = tf.where(tf.less(s, eps), s, 1./s)
   return u @ tf.diag(si) @ tf.transpose(v)
 
-def identity(n, dtype=default_dtype):
-  """Identity matrix of size n."""
-  
-  return tf.diag(tf.ones((n,), dtype=dtype))
+def symsqrt(mat):
+  s, u, v = tf.svd(mat)
+  eps = 1e-10   # zero threshold for eigenvalues
+  si = tf.where(tf.less(s, eps), s, tf.sqrt(s))
+  return u @ tf.diag(si) @ tf.transpose(v)
 
+def pseudo_inverse_sqrt(mat):
+  s, u, v = tf.svd(mat)
+  eps = 1e-10   # zero threshold for eigenvalues
+  si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
+  return u @ tf.diag(si) @ tf.transpose(v)
+
+
+def Identity(n, dtype=default_dtype):
+  """Identity matrix of size n."""
+  return tf.diag(tf.ones((n,), dtype=dtype))
 
 # partitions numpy array into sublists of given sizes
 def partition_np(vec, sizes):
@@ -54,6 +62,11 @@ def partition_np(vec, sizes):
     current_idx += sizes[i]
   assert current_idx == len(vec)
   return splits
+
+def chunks(l, n):
+  """Yield successive n-sized chunks from l."""
+  for i in range(0, len(l), n):
+    yield l[i:i + n]
 
 def partition(vec, sizes):
   assert len(vec.shape) == 1
@@ -72,19 +85,24 @@ def partition_test():
   check_equal(result[0], [1,2,3])
   assert (result[1] == [4,5]).all()
 
-  
-def v2c_tf(vec):
+
+def v2c(vec):
   """Converts vector to column matrix."""
   return tf.expand_dims(vec, 1)
 
-def v2r_tf(vec):
+def v2c_np(vec):
+  """Converts vector to column matrix."""
+  return np.expand_dims(vec, 1)
+
+def v2r(vec):
   """Converts vector into row matrix."""
   return tf.expand_dims(vec, 0)
   
-def c2v_tf(col):
+def c2v(col):
   """Converts vector into row matrix."""
   return tf.reshape(col, [-1])
-  
+
+
 def unvectorize_np(vec, rows):
   """Turns vectorized version of tensor into original matrix with given
   number of rows."""
@@ -96,7 +114,7 @@ def unvectorize(vec, rows):
   assert len(vec.shape) == 1
   assert vec.shape[0]%rows == 0
   cols = int(vec.shape[0]//rows) 
-  cols = [v2r_tf(v) for v in tf.split(vec, cols)]
+  cols = [v2r(v) for v in tf.split(vec, cols)]
   return tf.transpose(tf.concat(cols, 0))
 
 def unvectorize_test():
@@ -109,12 +127,13 @@ def vectorize_np(mat):
   return mat.reshape((-1, 1), order="F")
 
 def vectorize(mat):
-  return tf.reshape(tf.transpose(mat), [-1,])
+  """Turns matrix into a column."""
+  return tf.reshape(tf.transpose(mat), [-1,1])
 
 def vectorize_test():
   mat = tf.constant([[1, 3, 5], [2, 4, 6]])
   sess = tf.Session()
-  check_equal(sess.run(vectorize(mat)), [1,2,3,4,5,6])
+  check_equal(sess.run(c2v(vectorize(mat))), [1,2,3,4,5,6])
 
 
 def Kmat(rows, cols):
@@ -141,9 +160,20 @@ def Kmat_test():
                [0, 0, 1, 0, 0, 0],
                [0, 0, 0, 0, 0, 1]])
 
+  check_equal(Kmat(2,3),
+              [[1, 0, 0, 0, 0, 0],
+               [0, 0, 1, 0, 0, 0],
+               [0, 0, 0, 0, 1, 0],
+               [0, 1, 0, 0, 0, 0],
+               [0, 0, 0, 1, 0, 0],
+               [0, 0, 0, 0, 0, 1]])
+
 # turns flattened representation into list of matrices with given matrix
 # sizes
 def unflatten_np(Wf, fs):
+  if len(Wf.shape)==2 and Wf.shape[1] == 1:  # treat col mats as vectors
+    Wf = Wf.reshape(-1)
+    
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
   assert np.sum(sizes)==len(Wf)
@@ -153,6 +183,9 @@ def unflatten_np(Wf, fs):
 
 # Turns flattened Tensor into list of rank-2 tensors with given sizes
 def unflatten(Wf, fs):
+  Wf_shape = fix_shape(Wf.shape)
+  if len(Wf_shape)==2 and Wf_shape[1] == 1:  # treat col mats as vectors
+    Wf = tf.reshape(Wf, [-1])
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
   assert len(Wf.shape) == 1
@@ -179,11 +212,16 @@ def check_equal(a, b, rtol=1e-12, atol=1e-12):
     for line in traceback.format_stack():
       print(line.strip())
         
-    # exc_type, exc_value, exc_traceback = sys.exc_info()
-    # print("*** print_tb:")
-    # traceback.print_tb(exc_traceback, limit=10, file=sys.stdout)
-    # efmt = traceback.format_exc()
-    # print(efmt)
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    print("*** print_tb:")
+    traceback.print_tb(exc_traceback, limit=10, file=sys.stdout)
+    efmt = traceback.format_exc()
+    print(efmt)
+    import pdb; pdb.set_trace()
+
+# TensorShape([Dimension(2), Dimension(10)]) => (2, 10)
+def fix_shape(tf_shape):
+  return tuple(int(dim) for dim in tf_shape)
 
 def kronecker_cols(a, b):
   """Treats rank-1 vectors a, b as columns, returns Kronecker product a x b."""
@@ -206,24 +244,27 @@ def kronecker_cols_test():
 
 def kronecker(A, B):
   """Kronecker product of A,B"""
-  
-  bits = []
-  for i in range(A.shape[0]):
-    for j in range(A.shape[1]):
-      bits.append(tf.reshape(A[i,j]*B, [-1]))
-  flat_result = tf.concat(bits, axis=0)
-  new_shape = [int(A.shape[0]*B.shape[0]), int(A.shape[1]*B.shape[1])]
-  return tf.reshape(flat_result, new_shape)
+
+  Arows, Acols = fix_shape(A.shape)
+  C = tf.reshape(A, [-1, 1, 1])*tf.expand_dims(B, 0)
+  slices = [C[i] for i in range(Arows*Acols)]
+  slices_2d = list(chunks(slices, Acols))  # each chunk has Acols elems
+  return concat_blocks(slices_2d)
 
 kr = kronecker
 
 def kronecker_test():
-  A = tf.constant([[1,2],[3,4]])
-  B = tf.constant([[6,7]])
+  A0 = [[1,2],[3,4]]
+  B0 = [[6,7],[8,9]]
+  A = tf.constant(A0)
+  B = tf.constant(B0)
   C = kronecker(A, B)
   sess = tf.Session()
   C0 = sess.run(C)
-  check_equal(C0, [[6, 7, 12, 14], [18, 21, 24, 28]])
+  Ct = [[6, 7, 12, 14], [8, 9, 16, 18], [18, 21, 24, 28], [24, 27, 32, 36]]
+  Cnp = np.kron(A0, B0)
+  check_equal(C0, Ct)
+  check_equal(C0, Cnp)
 
 
 # def merge_mats(mats):
