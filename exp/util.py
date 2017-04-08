@@ -204,7 +204,7 @@ def unflatten_test():
   check_equal(result[2], [[9, 10]])
 
 
-def check_equal(a, b, rtol=1e-12, atol=1e-12):
+def check_equal(a, b, rtol=1e-9, atol=1e-12):
   try:
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
   except Exception as e:
