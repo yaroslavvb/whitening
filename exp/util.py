@@ -110,7 +110,7 @@ def unvectorize_np(vec, rows):
   cols = len(vec)//rows;
   return np.array(np.split(vec, cols)).T
 
-def unvectorize(vec, rows):
+def unvec(vec, rows):
   assert len(vec.shape) == 1
   assert vec.shape[0]%rows == 0
   cols = int(vec.shape[0]//rows) 
@@ -120,20 +120,20 @@ def unvectorize(vec, rows):
 def unvectorize_test():
   vec = tf.constant([1,2,3,4,5,6])
   sess = tf.Session()
-  result = sess.run(unvectorize(vec, 2))
+  result = sess.run(unvec(vec, 2))
   assert (result==[[1,3,5],[2,4,6]]).all()
 
 def vectorize_np(mat):
   return mat.reshape((-1, 1), order="F")
 
-def vectorize(mat):
+def vec(mat):
   """Turns matrix into a column."""
   return tf.reshape(tf.transpose(mat), [-1,1])
 
 def vectorize_test():
   mat = tf.constant([[1, 3, 5], [2, 4, 6]])
   sess = tf.Session()
-  check_equal(sess.run(c2v(vectorize(mat))), [1,2,3,4,5,6])
+  check_equal(sess.run(c2v(vec(mat))), [1,2,3,4,5,6])
 
 
 def Kmat(rows, cols):
@@ -191,7 +191,7 @@ def unflatten(Wf, fs):
   assert len(Wf.shape) == 1
   assert np.sum(sizes)==Wf.shape[0]
   Wsf = partition(Wf, sizes)
-  Ws = [unvectorize(Wsf[i], dims[i][0]) for i in range(len(sizes))]
+  Ws = [unvec(Wsf[i], dims[i][0]) for i in range(len(sizes))]
   return Ws
 
 def unflatten_test():
