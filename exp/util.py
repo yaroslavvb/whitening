@@ -27,6 +27,7 @@ def concat_blocks_test():
   check_equal(result0, [[1, 1, 2], [1, 1, 2], [2, 3, 4]])
   
 
+  # TODO: add name property
 def pseudo_inverse(mat, eps=1e-10):
   """Computes pseudo-inverse of mat, treating eigenvalues below eps as 0."""
   
@@ -308,6 +309,43 @@ def relu_mask_test():
   sess = tf.Session()
   check_equal(sess.run(relu_mask(a)), [0,0,1,1])
 
+def assert_rectangular(blocks):
+  lengths = np.array([len(row) for row in blocks])
+  assert (lengths==lengths[0]).all()
+  
+def empty_grid(rows, cols):
+  result = []
+  for i in range(rows):
+    result.append([None]*cols)
+  return result
+
+def block_diagonal_inverse(blocks):
+  assert_rectangular(blocks)
+  num_rows = len(blocks)
+  num_cols = len(blocks[0])
+
+  result = empty_grid(num_rows, num_cols)
+  dtype = blocks[0][0].dtype   # TODO: assert same dtype
+  
+  for i in range(len(blocks)):
+    for j in range(len(blocks[0])):
+      block = blocks[i][j]
+      if i == j:
+        result[i][j] = pseudo_inverse(block)
+      else:
+        result[i][j] = tf.zeros(shape=block.get_shape(),
+                                dtype=dtype)
+  return result
+        
+def block_diagonal_inverse_test():
+  sess = tf.Session()
+  blocks = [[2*Identity(3), tf.ones((3, 1))],
+              [tf.ones((1,3)), 2*Identity(1)]]
+  new_blocks = block_diagonal_inverse(blocks)
+  actual = concat_blocks(new_blocks)
+  expected = 0.5*Identity(4)
+  check_equal(sess.run(actual), sess.run(expected))
+
 def t(x):
   return tf.transpose(x)
 
@@ -323,3 +361,4 @@ if __name__=='__main__':
   unvectorize_test()
   unflatten_test()
   vectorize_test()
+  block_diagonal_inverse_test()
