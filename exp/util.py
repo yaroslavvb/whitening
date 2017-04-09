@@ -7,16 +7,17 @@ import sys
 import tensorflow as tf
 import traceback
 
-def concat_blocks(blocks):
+def concat_blocks(blocks, validate_dims=True):
   """Takes 2d grid of blocks representing matrices and concatenates to single
   matrix (aka ArrayFlatten)"""
-  
-  col_dims = np.array([[int(b.shape[1]) for b in row] for row in blocks])
-  col_sums = col_dims.sum(1)
-  assert (col_sums[0] == col_sums).all()
-  row_dims = np.array([[int(b.shape[0]) for b in row] for row in blocks])
-  row_sums = row_dims.sum(0)
-  assert (row_sums[0] == row_sums).all()
+
+  if validate_dims:
+    col_dims = np.array([[int(b.shape[1]) for b in row] for row in blocks])
+    col_sums = col_dims.sum(1)
+    assert (col_sums[0] == col_sums).all()
+    row_dims = np.array([[int(b.shape[0]) for b in row] for row in blocks])
+    row_sums = row_dims.sum(0)
+    assert (row_sums[0] == row_sums).all()
   
   block_rows = [tf.concat(row, axis=1) for row in blocks]
   return tf.concat(block_rows, axis=0)
@@ -50,7 +51,6 @@ def pseudo_inverse_sqrt(mat):
   eps = 1e-10   # zero threshold for eigenvalues
   si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
   return u @ tf.diag(si) @ tf.transpose(v)
-
 
 def Identity(n, dtype=default_dtype):
   """Identity matrix of size n."""
@@ -246,14 +246,45 @@ def kronecker_cols_test():
   sess = tf.Session()
   assert sess.run(tf.equal(kronecker_cols(a, b), c)).all()
 
-def kronecker(A, B):
-  """Kronecker product of A,B"""
+
+from tensorflow.python.framework import ops
+original_shape_func = ops.set_shapes_for_outputs
+def disable_shape_inference():
+  ops.set_shapes_for_outputs = lambda _: _
+  
+def enable_shape_inference():
+  ops.set_shapes_for_outputs = original_shape_func
+
+def kronecker(A, B, do_shape_inference=True):
+  """Kronecker product of A,B.
+  turn_off_shape_inference: if True, makes 10x10 kron go 2.4 sec -> 0.9 sec
+  """
 
   Arows, Acols = fix_shape(A.shape)
-  C = tf.reshape(A, [-1, 1, 1])*tf.expand_dims(B, 0)
-  slices = [C[i] for i in range(Arows*Acols)]
-  slices_2d = list(chunks(slices, Acols))  # each chunk has Acols elems
-  return concat_blocks(slices_2d)
+  Brows, Bcols = fix_shape(B.shape)
+  Crows, Ccols = Arows*Brows, Acols*Bcols
+  
+  temp = tf.reshape(A, [-1, 1, 1])*tf.expand_dims(B, 0)
+  #  slices1 = [C[i] for i in range(Arows*Acols)]
+  Bshape = tf.constant((Brows, Bcols))
+
+  # turn off shape inference
+  if not do_shape_inference:
+    disable_shape_inference()
+
+  # [1, n, m] => [n, m]
+  slices = [tf.reshape(s, Bshape) for s in tf.split(temp, Crows)]
+  
+  #  import pdb; pdb.set_trace()
+  grid = list(chunks(slices, Acols))
+  assert len(grid) == Arows
+  result = concat_blocks(grid, validate_dims=do_shape_inference)
+
+  if not do_shape_inference:
+    enable_shape_inference()
+    result.set_shape((Arows*Brows, Acols*Bcols))
+    
+  return result
 
 kr = kronecker
 
