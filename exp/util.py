@@ -8,6 +8,9 @@ import tensorflow as tf
 import traceback
 
 def concat_blocks(blocks):
+  """Takes 2d grid of blocks representing matrices and concatenates to single
+  matrix (aka ArrayFlatten)"""
+  
   col_dims = np.array([[int(b.shape[1]) for b in row] for row in blocks])
   col_sums = col_dims.sum(1)
   assert (col_sums[0] == col_sums).all()
