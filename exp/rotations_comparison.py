@@ -248,6 +248,42 @@ def natural_bd(lr0, num_samples=1):
   train_op = grad_update(Wf - lr * ifisher @ dWf)
   return do_run(train_op)
 
+def natural_bd_sqrt(lr0, num_samples=1):
+  init_dict[lr_holder] = lr0
+  np.random.seed(0)
+  tf.set_random_seed(0)
+
+  A = [0]*(n+2)
+  A2 = [0]*(n+2)  # augmented forward props for natural gradient
+  A[0] = u.Identity(dsize)
+  A2[0] =  u.Identity(dsize*num_samples)
+  for i in range(n+1):
+    # fs is off by 2 from common notation, ie W[0] has shape f[0],f[-1]
+    A[i+1] = tf.matmul(W[i], A[i], name="A"+str(i+1))
+    if i == 0:
+      A2[i+1] = tf.concat([W[0]]*num_samples, axis=1)
+    else:
+      A2[i+1] = tf.matmul(W[i], A2[i], name="A2"+str(i+1))
+
+  # create backprop matrices
+  # B[i] has backprop for matrix i
+  B = [0]*(n+1)
+  B2 = [0]*(n+1)
+  B[n] = -err/dsize
+  B2[n] = tf.random_normal((f(n), dsize*num_samples), 0, 1, seed=0,
+                           dtype=dtype)
+  for i in range(n-1, -1, -1):
+    B[i] = tf.matmul(tf.transpose(W[i+1]), B[i+1], name="B"+str(i))
+    B2[i] = tf.matmul(tf.transpose(W[i+1]), B2[i+1], name="B2"+str(i))
+
+  grads = tf.concat([u.khatri_rao(A2[i], B2[i]) for i in range(1, n+1)], axis=0)
+  fisher = grads @ tf.transpose(grads) / (dsize*num_samples)
+  blocks = u.partition_matrix_evenly(fisher, 10)
+  #  ifisher = u.pseudo_inverse(fisher)
+  ifisher = u.concat_blocks(u.block_diagonal_inverse_sqrt(blocks))
+  train_op = grad_update(Wf - lr * ifisher @ dWf)
+  return do_run(train_op)
+
 
 def natural_kfac(lr0, num_samples=1):
   init_dict[lr_holder] = lr0
@@ -328,9 +364,9 @@ def grad_update(new_val):
 if __name__ == '__main__':
   # Compare a set of algorithms on rotations problem
 
-  X0 = np.genfromtxt('data/large_rotations3_X0.csv',
+  X0 = np.genfromtxt('data/large_rotations2_X0.csv',
                      delimiter= ",")
-  Y0 = np.genfromtxt('data/large_rotations3_Y0.csv',
+  Y0 = np.genfromtxt('data/large_rotations2_Y0.csv',
                      delimiter= ",")
   W0f = v2c_np(np.genfromtxt('data/large_rotations2_W0f.csv',
                              delimiter= ","))
@@ -433,12 +469,16 @@ if __name__ == '__main__':
   #  np.savetxt("data/rotations_comparison_bd.csv", runs, delimiter=',')
 
   # try with badly conditioned data
-  runs = []
-  runs.append(gradient(0.01)) # 1.84 ms
-  runs.append(natural_bd(lr0=0.01, num_samples=5))   # 13.92 ms
-  runs.append(natural_kfac(lr0=0.01, num_samples=5)) # 7.96 ms
-  # #  runs.append(natural_kfac(lr0=0.01, num_samples=1)) # 7.70 ms # diverges
-  runs.append(newton_bd(0.1))                        # 17.18 ms
-  runs.append(newton_kfac(0.1))                      # 7.69 ms
-  np.savetxt("data/rotations_comparison_fast_bad.csv", runs, delimiter=',')
+  # runs = []
+  # runs.append(gradient(0.01)) # 1.84 ms
+  # runs.append(natural_bd(lr0=0.01, num_samples=5))   # 13.92 ms
+  # runs.append(natural_kfac(lr0=0.01, num_samples=5)) # 7.96 ms
+  # # #  runs.append(natural_kfac(lr0=0.01, num_samples=1)) # 7.70 ms # diverges
+  # runs.append(newton_bd(0.1))                        # 17.18 ms
+  # runs.append(newton_kfac(0.1))                      # 7.69 ms
+  # np.savetxt("data/rotations_comparison_fast_bad.csv", runs, delimiter=',')
 
+
+  result = natural_bd_sqrt(lr0=0.01, num_samples=5)
+  np.savetxt("data/natural_bd_sqrt.csv", result, delimiter=',')
+  
