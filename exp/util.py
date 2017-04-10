@@ -1,5 +1,6 @@
 import tensorflow as tf
 
+# TODO: replace "shape" with "get_shape" for numpy compat
 default_dtype = tf.float64
 
 import numpy as np
@@ -30,7 +31,30 @@ def concat_blocks_test():
   sess = tf.Session()
   result0 = sess.run(result)
   check_equal(result0, [[1, 1, 2], [1, 1, 2], [2, 3, 4]])
+
+
+def partition_matrix_evenly(mat, splits):
+  assert int(mat.shape[0])%splits==0
+  assert int(mat.shape[1])%splits==0
   
+  row_chunks = tf.split(mat, splits, axis=0)
+  col_chunks = [tf.split(chunk, splits, axis=1) for chunk in row_chunks]
+  return col_chunks
+
+def partition_matrix_evenly_test():
+  a = tf.reshape([1,2,3,4], (2,2))
+  blocks = partition_matrix_evenly(a, 2)
+  a2 = concat_blocks(blocks)
+  sess = tf.Session()
+  check_equal(sess.run(a2), sess.run(a))
+
+# inverse of concat blocks
+def partition_matrix(mat, sizes):
+  pass
+
+def partition_matrix_test():
+  pass
+
 
   # TODO: add name property
 def pseudo_inverse(mat, eps=1e-10):
@@ -322,7 +346,7 @@ def col(A,i):
   assert i>=0 and i < A.get_shape()[1]
   return tf.expand_dims(A[:,i], 1)
   
-def khatri_rao(A, B):
+def khatri_rao_old(A, B):
   """Khatri rao product of matrices A,B"""
 
   cols = []
@@ -331,6 +355,12 @@ def khatri_rao(A, B):
   for i in range(A.get_shape()[1]):
     cols.append(kronecker_cols(A[:, i], B[:,i]))
   return tf.concat(cols, axis=1)
+
+def khatri_rao(A, B):
+  Arows, Acols = fix_shape(A.shape)
+  Brows, Bcols = fix_shape(B.shape)
+  assert Acols==Bcols
+  return tf.reshape(tf.einsum("ik,jk->ijk", A, B), (Arows*Brows, Acols))
 
 def khatri_rao_test():
   A = tf.constant([[1, 2], [3, 4]])
@@ -342,14 +372,14 @@ def khatri_rao_test():
 def outer_sum(A, B):
   """Treats A,B as [f x d] activation/backprop matrices over d points,
   computes sum of d outer products ba' of matching columns a,b"""
-  sess.run(tf.einsum("ik,jk->ij", B, A))
+  return tf.einsum("ik,jk->ij", B, A)
 
 def outer_sum_test():
   A = tf.constant([[1, 2], [3, 4]])
   B = tf.constant([[5, 6], [7, 8]])
-  C = tf.einsum("ik,jk->ij", B, A)
+  C = outer_sum(A, B)
   sess = tf.Session()
-  check_equal(sess.run(C), [[17, 39], [23, 53]])
+  check_equal(C, [[17, 39], [23, 53]])
   
 def relu_mask(a, dtype=default_dtype):
   from tensorflow.python.ops import gen_nn_ops
@@ -445,4 +475,5 @@ if __name__=='__main__':
   unflatten_test()
   vectorize_test()
   block_diagonal_inverse_test()
-  outer_sum_test()
+  #outer_sum_test()
+  partition_matrix_evenly_test()
