@@ -5,6 +5,7 @@ default_dtype = tf.float64
 import numpy as np
 import sys
 import tensorflow as tf
+import time
 import traceback
 
 def concat_blocks(blocks, validate_dims=True):
@@ -92,18 +93,23 @@ def partition_test():
 
 def v2c(vec):
   """Converts vector to column matrix."""
+  assert len(vec.shape) == 1
   return tf.expand_dims(vec, 1)
 
 def v2c_np(vec):
   """Converts vector to column matrix."""
+  assert len(vec.shape) == 1
   return np.expand_dims(vec, 1)
 
 def v2r(vec):
   """Converts vector into row matrix."""
+  assert len(vec.shape) == 1
   return tf.expand_dims(vec, 0)
   
 def c2v(col):
   """Converts vector into row matrix."""
+  assert len(col.shape) == 2
+  assert col.shape[1] == 1
   return tf.reshape(col, [-1])
 
 
@@ -384,6 +390,37 @@ def t(x):
   return tf.transpose(x)
 
 
+  
+global_time_list = []
+global_last_time = 0
+def reset_time():
+  global global_time_list, global_last_time
+  global_time_list = []
+  global_last_time = time.time()
+  
+def record_time():
+  global global_last_time, global_time_list
+  new_time = time.time()
+  global_time_list.append(new_time - global_last_time)
+  global_last_time = time.time()
+
+  
+def summarize_time(time_list=None):
+  if time_list is None:
+    time_list = global_time_list
+    
+  time_list = 1000*np.array(time_list)  # get seconds, convert to ms
+  min = np.min(time_list)
+  median = np.median(time_list)
+  formatted = ["%.2f"%(d,) for d in time_list]
+  print("Times: min: %.2f, median: %.2f, times: %s"%(min, median,",".join(formatted)))
+
+def summarize_graph(g=None):
+  if not g:
+    g = tf.get_default_graph()
+  print("Graph: %d ops, %d MBs"%(len(g.get_operations()),
+                                 len(str(g.as_graph_def()))/10**6))
+  
 if __name__=='__main__':
   relu_mask_test()
   kronecker_test()

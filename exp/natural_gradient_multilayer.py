@@ -41,8 +41,8 @@ def gd_test():
   Y = tf.Variable(Y_, trainable=False)
   init_dict={Y_: Y0}
 
-  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
-                     delimiter= ",")
+  W0f = v2c_np(np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                             delimiter= ","))
   W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
@@ -132,8 +132,8 @@ def gd_manual_test():
   Y = tf.Variable(Y_, trainable=False)
   init_dict={Y_: Y0}
 
-  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
-                     delimiter= ",")
+  W0f = v2c_np(np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                             delimiter= ","))
   W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
@@ -249,8 +249,8 @@ def gd_manual_vectorized_test():
   Y = tf.Variable(Y_, trainable=False)
   init_dict={Y_: Y0}
 
-  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
-                     delimiter= ",")
+  W0f = v2c_np(np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                             delimiter= ","))
   W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
@@ -266,7 +266,7 @@ def gd_manual_vectorized_test():
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
   Wf_size = np.sum(sizes[1:])
-  Wf_holder = tf.placeholder(dtype, shape=(Wf_size,))
+  Wf_holder = tf.placeholder(dtype, shape=W0f.shape)
   Wf = tf.Variable(Wf_holder, name="Wf")
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
@@ -328,7 +328,7 @@ def gd_manual_vectorized_test():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vec(grad) for grad in dW], axis=0)
 
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
@@ -372,8 +372,8 @@ def fisher_test():
   Y = tf.Variable(Y_, trainable=False)
   init_dict={Y_: Y0}
 
-  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
-                     delimiter= ",")
+  W0f = v2c_np(np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                             delimiter= ","))
   W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
@@ -505,8 +505,8 @@ def natural_gradient_test():
   Y = tf.Variable(Y_, trainable=False)
   init_dict={Y_: Y0}
 
-  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
-                     delimiter= ",")
+  W0f = v2c_np(np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                             delimiter= ","))
   W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
@@ -522,7 +522,7 @@ def natural_gradient_test():
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
   Wf_size = np.sum(sizes[1:])
-  Wf_holder = tf.placeholder(dtype, shape=(Wf_size,))
+  Wf_holder = tf.placeholder(dtype, shape=W0f.shape)
   Wf = tf.Variable(Wf_holder, name="Wf")
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
@@ -553,7 +553,6 @@ def natural_gradient_test():
   assert A[n+1].get_shape() == Y0.shape
 
   err = Y - A[n+1]
-  #  loss = (1./(2*dsize))*(err @ tf.transpose(err))
   loss = tf.reduce_sum(tf.square(err))/(2*dsize)
   lr = tf.Variable(0.001, dtype=dtype)
   
@@ -584,7 +583,7 @@ def natural_gradient_test():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vec(grad) for grad in dW], axis=0)
 
 
   # inverse fisher preconditioner
@@ -595,8 +594,8 @@ def natural_gradient_test():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
-  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
+  new_val_matrix = Wf - lr*(ifisher @ dWf)
+  train_op1 = Wf_copy.assign(new_val_matrix)
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -636,8 +635,8 @@ def newton_test():
   Y = tf.Variable(Y_, trainable=False)
   init_dict={Y_: Y0}
 
-  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
-                     delimiter= ",")
+  W0f = v2c_np(np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                             delimiter= ","))
   W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
@@ -653,7 +652,7 @@ def newton_test():
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
   Wf_size = np.sum(sizes[1:])
-  Wf_holder = tf.placeholder(dtype, shape=(Wf_size,))
+  Wf_holder = tf.placeholder(dtype, shape=W0f.shape)
   Wf = tf.Variable(Wf_holder, name="Wf")
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
@@ -747,7 +746,7 @@ def newton_test():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vec(grad) for grad in dW], axis=0)
 
 
   # inverse fisher preconditioner
@@ -758,8 +757,8 @@ def newton_test():
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
                         name="Wf_copy")
-  new_val_matrix = v2c(Wf) - lr*(ifisher @ v2c(dWf))
-  train_op1 = Wf_copy.assign(c2v(new_val_matrix))
+  new_val_matrix = Wf - lr*(ifisher @ dWf)
+  train_op1 = Wf_copy.assign(new_val_matrix)
   train_op2 = Wf.assign(Wf_copy)
 
   sess = tf.Session()
@@ -804,8 +803,8 @@ def relu_manual_vectorized_test():
   Y = tf.Variable(Y_, trainable=False)
   init_dict={Y_: Y0}
 
-  W0f = np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
-                     delimiter= ",")
+  W0f = v2c_np(np.genfromtxt('data/natural_gradient_multilayer_W0f.csv',
+                             delimiter= ","))
   W0s = unflatten_np(W0f, fs[1:])  # Wf doesn't have first layer (data matrix)
   W0s.insert(0, X0)
 
@@ -821,7 +820,7 @@ def relu_manual_vectorized_test():
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
   Wf_size = np.sum(sizes[1:])
-  Wf_holder = tf.placeholder(dtype, shape=(Wf_size,))
+  Wf_holder = tf.placeholder(dtype, shape=W0f.shape)
   Wf = tf.Variable(Wf_holder, name="Wf")
   assert Wf.shape == W0f.shape
   init_dict[Wf_holder] = W0f
@@ -890,7 +889,7 @@ def relu_manual_vectorized_test():
   del dW[0]  # get rid of W[0] update
   
   # construct flattened gradient update vector
-  dWf = tf.concat([vectorize(grad) for grad in dW], axis=0)
+  dWf = tf.concat([vec(grad) for grad in dW], axis=0)
 
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
                                  name="Wf_copy_init"),
