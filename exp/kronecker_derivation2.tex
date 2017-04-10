@@ -1,0 +1,37 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{amsmath}
+
+\begin{document}
+
+\title{Kfac assumption}
+\author{Yaroslav Bulatov}
+
+\maketitle
+
+Suppose we have a left matmul operation, $y=Wx$.
+The gradient with respect to $W$ evaluated on example $i$ can be written as
+
+$$G_i = b_i a_i'$$
+
+Quantities $b$ and $a$ are column vectors representing backprops and activations. Note that this has the same shape as $W$.
+
+
+For purposes of computing covariance, we flatten this gradient
+$$g_i = \text{vec}(G_i) = a_i \otimes b_i$$
+
+Covariance can now be expressed as
+
+$$\text{cov} = \frac{1}{n} \sum_i g_i g_i'=\frac{1}{n}\sum_i(a_ia_i')\otimes (b_ib_i')$$
+
+To obtain natural gradient preconditioner we seek a transformation that renders new covariance matrix diagonal.
+
+Let $\hat{a_i}=Ua$ and $\hat{b_i}=Vb$, the corresponding covariance is
+$$\bar{\text{cov}} = \frac{1}{n} \sum_i U a_ia_i' U' \otimes Vb_ib_i'V'$$
+It's easy to find $U$ and $V$ if we assume the quantity above is equalent to
+$$\bar{\text{cov}}\approx \frac{1}{n} (\sum_i U a_ia_i' U')  \otimes (\sum_i Vb_ib_i'V') = \frac{1}{n} UAA'U' \otimes VBB'V$$
+
+From this approximation is follows that we should pick $U=A^{-1}$ and $V=B^{-1}$
+
+
+\end{document}
