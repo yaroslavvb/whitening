@@ -120,9 +120,10 @@ def newton_bd(lr0):
   for row in blocks:
     del row[0]
 
-  grads = tf.concat([u.khatri_rao(A[i], Bn[i]) for i in range(1, n+1)], axis=0)
-  hess = grads @ tf.transpose(grads) / dsize
-  blocks = u.partition_matrix_evenly(hess, 10)
+  # todo -- figure out why this is not the same as block inversion
+  # grads = tf.concat([u.khatri_rao(A[i], Bn[i]) for i in range(1, n+1)], axis=0)
+  # hess = grads @ tf.transpose(grads) / dsize
+  # blocks = u.partition_matrix_evenly(hess, 10)
   ihess = u.concat_blocks(u.block_diagonal_inverse(blocks))
   train_op = grad_update(Wf - lr * ihess @ dWf)
   return do_run(train_op)
@@ -327,9 +328,9 @@ def grad_update(new_val):
 if __name__ == '__main__':
   # Compare a set of algorithms on rotations problem
 
-  X0 = np.genfromtxt('data/large_rotations2_X0.csv',
+  X0 = np.genfromtxt('data/large_rotations3_X0.csv',
                      delimiter= ",")
-  Y0 = np.genfromtxt('data/large_rotations2_Y0.csv',
+  Y0 = np.genfromtxt('data/large_rotations3_Y0.csv',
                      delimiter= ",")
   W0f = v2c_np(np.genfromtxt('data/large_rotations2_W0f.csv',
                              delimiter= ","))
@@ -388,6 +389,7 @@ if __name__ == '__main__':
   lr_holder = tf.placeholder(dtype=dtype, shape=())
   lr = tf.Variable(lr_holder, dtype=dtype)
 
+
   # 720 ms per step
   # result = newton(1.0)
   # np.savetxt("data/newton.csv", result, delimiter=',')
@@ -404,14 +406,14 @@ if __name__ == '__main__':
   #  np.savetxt("data/natural_sampled1.csv", result, delimiter=',')
   #  sys.exit()
 
-  runs = []
-  runs.append(gradient(0.01)) # 1.84 ms
-  runs.append(natural_bd(lr0=0.01, num_samples=5))   # 13.92 ms
-  runs.append(natural_kfac(lr0=0.01, num_samples=5)) # 7.96 ms
-  # #  runs.append(natural_kfac(lr0=0.01, num_samples=1)) # 7.70 ms # diverges
-  runs.append(newton_bd(0.001))                        # 17.18 ms
-  runs.append(newton_kfac(0.1))                      # 7.69 ms
-  np.savetxt("data/rotations_comparison_fast.csv", runs, delimiter=',')
+  # runs = []
+  # runs.append(gradient(0.01)) # 1.84 ms
+  # runs.append(natural_bd(lr0=0.01, num_samples=5))   # 13.92 ms
+  # runs.append(natural_kfac(lr0=0.01, num_samples=5)) # 7.96 ms
+  # # #  runs.append(natural_kfac(lr0=0.01, num_samples=1)) # 7.70 ms # diverges
+  # runs.append(newton_bd(0.1))                        # 17.18 ms
+  # runs.append(newton_kfac(0.1))                      # 7.69 ms
+  # np.savetxt("data/rotations_comparison_fast.csv", runs, delimiter=',')
 
   
   # runs = []
@@ -429,3 +431,14 @@ if __name__ == '__main__':
   
   #  newton_bd(0.001)
   #  np.savetxt("data/rotations_comparison_bd.csv", runs, delimiter=',')
+
+  # try with badly conditioned data
+  runs = []
+  runs.append(gradient(0.01)) # 1.84 ms
+  runs.append(natural_bd(lr0=0.01, num_samples=5))   # 13.92 ms
+  runs.append(natural_kfac(lr0=0.01, num_samples=5)) # 7.96 ms
+  # #  runs.append(natural_kfac(lr0=0.01, num_samples=1)) # 7.70 ms # diverges
+  runs.append(newton_bd(0.1))                        # 17.18 ms
+  runs.append(newton_kfac(0.1))                      # 7.69 ms
+  np.savetxt("data/rotations_comparison_fast_bad.csv", runs, delimiter=',')
+
