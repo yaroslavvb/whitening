@@ -338,6 +338,18 @@ def khatri_rao_test():
   C = tf.constant([[5,12], [7,16], [15,24], [21,32]])
   sess = tf.Session()
   assert sess.run(tf.equal(khatri_rao(A, B), C)).all()
+
+def outer_sum(A, B):
+  """Treats A,B as [f x d] activation/backprop matrices over d points,
+  computes sum of d outer products ba' of matching columns a,b"""
+  sess.run(tf.einsum("ik,jk->ij", B, A))
+
+def outer_sum_test():
+  A = tf.constant([[1, 2], [3, 4]])
+  B = tf.constant([[5, 6], [7, 8]])
+  C = tf.einsum("ik,jk->ij", B, A)
+  sess = tf.Session()
+  check_equal(sess.run(C), [[17, 39], [23, 53]])
   
 def relu_mask(a, dtype=default_dtype):
   from tensorflow.python.ops import gen_nn_ops
@@ -433,3 +445,4 @@ if __name__=='__main__':
   unflatten_test()
   vectorize_test()
   block_diagonal_inverse_test()
+  outer_sum_test()
