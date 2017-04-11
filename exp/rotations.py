@@ -24,6 +24,7 @@ dtype = np.float64
 
 def simple_gradient_test():
   tf.reset_default_graph()
+  import pdb; pdb.set_trace()
   X0 = np.genfromtxt('data/rotations_simple_X0.csv',
                      delimiter= ",")
   Y0 = np.genfromtxt('data/rotations_simple_Y0.csv',
