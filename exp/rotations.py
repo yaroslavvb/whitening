@@ -24,7 +24,6 @@ dtype = np.float64
 
 def simple_gradient_test():
   tf.reset_default_graph()
-  import pdb; pdb.set_trace()
   X0 = np.genfromtxt('data/rotations_simple_X0.csv',
                      delimiter= ",")
   Y0 = np.genfromtxt('data/rotations_simple_Y0.csv',
@@ -249,11 +248,11 @@ def simple_newton_test():
 
 def relu_gradient_test():
   tf.reset_default_graph()
-  X0 = np.genfromtxt('data/rotations_relu_X0.csv',
+  X0 = np.genfromtxt('data/rotations_X0.csv',
                      delimiter= ",")
-  Y0 = np.genfromtxt('data/rotations_relu_Y0.csv',
+  Y0 = np.genfromtxt('data/rotations_Y0.csv',
                      delimiter= ",")
-  W0f = v2c_np(np.genfromtxt('data/rotations_relu_W0f.csv',
+  W0f = v2c_np(np.genfromtxt('data/rotations_W0f.csv',
                             delimiter= ","))
   assert W0f.shape == (8, 1)
   
