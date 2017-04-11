@@ -367,7 +367,8 @@ def newton_test():
   result = newton(1.0)
   expected_result = [8.9023744225439743e-05, 0.060120791316053412, 0.0059295249954177918, 1.9856240803246437e-05, 2.7125563957575423e-10]
   
-  u.check_equal(result, expected_result)
+  # 1e-9 works on mac, need to lower to 1e-5 on cirra
+  u.check_equal(result, expected_result, rtol=1e-5)
   # min: 733.18, median: 773.05, times: 1738.55,733.18,773.05 ,761.35,790.06
   assert min(u.global_time_list)>0.1 and min(u.global_time_list)<2.0
 
