@@ -8,6 +8,7 @@ import sys
 import tensorflow as tf
 import time
 import traceback
+import inspect
 
 def concat_blocks(blocks, validate_dims=True):
   """Takes 2d grid of blocks representing matrices and concatenates to single
@@ -34,6 +35,7 @@ def concat_blocks_test():
 
 
 def partition_matrix_evenly(mat, splits):
+  """Breaks matrix into 2d grid of equal size."""
   assert int(mat.shape[0])%splits==0
   assert int(mat.shape[1])%splits==0
   
@@ -65,15 +67,18 @@ def pseudo_inverse(mat, eps=1e-10):
   si = tf.where(tf.less(s, eps), s, 1./s)
   return u @ tf.diag(si) @ tf.transpose(v)
 
-def symsqrt(mat):
+def symsqrt(mat, eps=1e-10):
+  """Symmetric square root."""
   s, u, v = tf.svd(mat)
-  eps = 1e-10   # zero threshold for eigenvalues
+  # sqrt is unstable around 0, just use 0 in such case
+  print("Warning, cutting off at eps")
   si = tf.where(tf.less(s, eps), s, tf.sqrt(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
-def pseudo_inverse_sqrt(mat):
+def pseudo_inverse_sqrt(mat, eps=1e-10):
+  """half pseduo-inverse"""
   s, u, v = tf.svd(mat)
-  eps = 1e-10   # zero threshold for eigenvalues
+  # zero threshold for eigenvalues
   si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
@@ -98,7 +103,7 @@ def chunks(l, n):
     yield l[i:i + n]
 
 def partition_list(l, sizes):
-  """Partitions l into sublists of given sizes."""
+  """Partition l into sublists of given sizes."""
   assert len(l.shape) == 1
   assert np.sum(sizes) == l.shape[0]
   splits = []
@@ -117,42 +122,44 @@ def partition_list_test():
 
 
 def v2c(vec):
-  """Converts vector to column matrix."""
+  """Convert vector to column matrix."""
   assert len(vec.shape) == 1
   return tf.expand_dims(vec, 1)
 
 def v2c_np(vec):
-  """Converts vector to column matrix."""
+  """Convert vector to column matrix."""
   assert len(vec.shape) == 1
   return np.expand_dims(vec, 1)
 
 def v2r(vec):
-  """Converts vector into row matrix."""
+  """Convert vector into row matrix."""
   assert len(vec.shape) == 1
   return tf.expand_dims(vec, 0)
   
 def c2v(col):
-  """Converts vector into row matrix."""
+  """Convert vector into row matrix."""
   assert len(col.shape) == 2
   assert col.shape[1] == 1
   return tf.reshape(col, [-1])
 
 
 def unvectorize_np(vec, rows):
-  """Turns vectorized version of tensor into original matrix with given
+  """Turn vectorized version of tensor into original matrix with given
   number of rows."""
   assert len(vec)%rows==0
   cols = len(vec)//rows;
   return np.array(np.split(vec, cols)).T
 
 def unvec(vec, rows):
+  """Turn vectorized version of tensor into original matrix with given
+  number of rows."""
   assert len(vec.shape) == 1
   assert vec.shape[0]%rows == 0
   cols = int(vec.shape[0]//rows) 
   cols = [v2r(v) for v in tf.split(vec, cols)]
   return tf.transpose(tf.concat(cols, 0))
 
-def unvectorize_test():
+def unvec_test():
   vec = tf.constant([1,2,3,4,5,6])
   sess = tf.Session()
   result = sess.run(unvec(vec, 2))
@@ -162,10 +169,10 @@ def vectorize_np(mat):
   return mat.reshape((-1, 1), order="F")
 
 def vec(mat):
-  """Turns matrix into a column."""
+  """Vectorize matrix."""
   return tf.reshape(tf.transpose(mat), [-1,1])
 
-def vectorize_test():
+def vec_test():
   mat = tf.constant([[1, 3, 5], [2, 4, 6]])
   sess = tf.Session()
   check_equal(sess.run(c2v(vec(mat))), [1,2,3,4,5,6])
@@ -216,8 +223,10 @@ def unflatten_np(Wf, fs):
   Ws = [unvectorize_np(Wsf[i], dims[i][0]) for i in range(len(sizes))]
   return Ws
 
-# Turns flattened Tensor into list of rank-2 tensors with given sizes
+
 def unflatten(Wf, fs):
+  """Turn flattened Tensor into list of rank-2 tensors with given sizes."""
+  
   Wf_shape = fix_shape(Wf.shape)
   if len(Wf_shape)==2 and Wf_shape[1] == 1:  # treat col mats as vectors
     Wf = tf.reshape(Wf, [-1])
@@ -240,6 +249,8 @@ def unflatten_test():
 
 
 def check_equal(a, b, rtol=1e-9, atol=1e-12):
+  """Helper function to check that two vectors are equal."""
+  
   try:
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
   except Exception as e:
@@ -278,14 +289,6 @@ def kronecker_cols_test():
   assert sess.run(tf.equal(kronecker_cols(a, b), c)).all()
 
 
-from tensorflow.python.framework import ops
-original_shape_func = ops.set_shapes_for_outputs
-def disable_shape_inference():
-  ops.set_shapes_for_outputs = lambda _: _
-  
-def enable_shape_inference():
-  ops.set_shapes_for_outputs = original_shape_func
-
 def kronecker(A, B, do_shape_inference=True):
   """Kronecker product of A,B.
   turn_off_shape_inference: if True, makes 10x10 kron go 2.4 sec -> 0.9 sec
@@ -296,7 +299,6 @@ def kronecker(A, B, do_shape_inference=True):
   Crows, Ccols = Arows*Brows, Acols*Bcols
   
   temp = tf.reshape(A, [-1, 1, 1])*tf.expand_dims(B, 0)
-  #  slices1 = [C[i] for i in range(Arows*Acols)]
   Bshape = tf.constant((Brows, Bcols))
 
   # turn off shape inference
@@ -333,35 +335,19 @@ def kronecker_test():
   check_equal(C0, Cnp)
 
 
-# def merge_mats(mats):
-#   """Merges mxn grid of mats into single matrix."""
-#   m = len(mats)
-#   n = len(mats[0])
-#   for i in range(m):
-#     for j in range(n):
-#       pass
-
 def col(A,i):
   """Extracts i'th column of matrix A"""
   assert len(A.get_shape())==2
   assert i>=0 and i < A.get_shape()[1]
   return tf.expand_dims(A[:,i], 1)
-  
-def khatri_rao_old(A, B):
-  """Khatri rao product of matrices A,B"""
 
-  cols = []
-  assert len(A.get_shape()) == 2, "A must be rank-1, got shape %s" %(a.get_shape(),)
-  assert A.get_shape()[1] == B.get_shape()[1]
-  for i in range(A.get_shape()[1]):
-    cols.append(kronecker_cols(A[:, i], B[:,i]))
-  return tf.concat(cols, axis=1)
 
 def khatri_rao(A, B):
   Arows, Acols = fix_shape(A.shape)
   Brows, Bcols = fix_shape(B.shape)
   assert Acols==Bcols
   return tf.reshape(tf.einsum("ik,jk->ijk", A, B), (Arows*Brows, Acols))
+
 
 def khatri_rao_test():
   A = tf.constant([[1, 2], [3, 4]])
@@ -370,19 +356,9 @@ def khatri_rao_test():
   sess = tf.Session()
   assert sess.run(tf.equal(khatri_rao(A, B), C)).all()
 
-def outer_sum(A, B):
-  """Treats A,B as [f x d] activation/backprop matrices over d points,
-  computes sum of d outer products ba' of matching columns a,b"""
-  return tf.einsum("ik,jk->ij", B, A)
-
-def outer_sum_test():
-  A = tf.constant([[1, 2], [3, 4]])
-  B = tf.constant([[5, 6], [7, 8]])
-  C = outer_sum(A, B)
-  sess = tf.Session()
-  check_equal(C, [[17, 39], [23, 53]])
   
 def relu_mask(a, dtype=default_dtype):
+  """Produces mask of 1s for positive values and 0s for negative values."""
   from tensorflow.python.ops import gen_nn_ops
   ones = tf.ones(a.get_shape(), dtype=dtype)
   return gen_nn_ops._relu_grad(ones, a)
@@ -397,12 +373,15 @@ def assert_rectangular(blocks):
   assert (lengths==lengths[0]).all()
   
 def empty_grid(rows, cols):
+  """Create empty list of lists of rows-by-cols shape."""
   result = []
   for i in range(rows):
     result.append([None]*cols)
   return result
 
 def block_diagonal_inverse(blocks):
+  """Invert diagonal blocks, leave remaining unchanged."""
+  
   assert_rectangular(blocks)
   num_rows = len(blocks)
   num_cols = len(blocks[0])
@@ -437,7 +416,8 @@ def block_diagonal_inverse_sqrt(blocks):
         result[i][j] = tf.zeros(shape=block.get_shape(),
                                 dtype=dtype)
   return result
-        
+
+
 def block_diagonal_inverse_test():
   sess = tf.Session()
   blocks = [[2*Identity(3), tf.ones((3, 1))],
@@ -447,11 +427,12 @@ def block_diagonal_inverse_test():
   expected = 0.5*Identity(4)
   check_equal(sess.run(actual), sess.run(expected))
 
+  
 def t(x):
   return tf.transpose(x)
 
-
   
+# Time tracking functions
 global_time_list = []
 global_last_time = 0
 def reset_time():
@@ -464,7 +445,6 @@ def record_time():
   new_time = time.time()
   global_time_list.append(new_time - global_last_time)
   global_last_time = time.time()
-
   
 def summarize_time(time_list=None):
   if time_list is None:
@@ -475,25 +455,28 @@ def summarize_time(time_list=None):
   median = np.median(time_list)
   formatted = ["%.2f"%(d,) for d in time_list]
   print("Times: min: %.2f, median: %.2f, times: %s"%(min, median,",".join(formatted)))
-
+  
 def summarize_graph(g=None):
   if not g:
     g = tf.get_default_graph()
   print("Graph: %d ops, %d MBs"%(len(g.get_operations()),
                                  len(str(g.as_graph_def()))/10**6))
+
+from tensorflow.python.framework import ops
+original_shape_func = ops.set_shapes_for_outputs
+def disable_shape_inference():
+  ops.set_shapes_for_outputs = lambda _: _
+  
+def enable_shape_inference():
+  ops.set_shapes_for_outputs = original_shape_func
+
+
+def run_all_tests(module):
+  all_functions = inspect.getmembers(module, inspect.isfunction)
+  for name,func in all_functions:
+    if name.endswith("_test"):
+      func()
+  print(module.__name__+" tests passed.")
   
 if __name__=='__main__':
-  relu_mask_test()
-  kronecker_test()
-  Kmat_test()
-  concat_blocks_test()
-  kronecker_cols_test()
-  khatri_rao_test()
-  partition_list_test()
-  unvectorize_test()
-  unflatten_test()
-  vectorize_test()
-  block_diagonal_inverse_test()
-  #outer_sum_test()
-  partition_matrix_evenly_test()
-  print("%s tests passed" %(sys.argv[0]))
+  run_all_tests(sys.modules[__name__])
