@@ -334,12 +334,13 @@ def natural_kfac(lr0, num_samples=1):
   train_op = grad_update(Wf - lr * ifisher @ dWf)
   return do_run(train_op)
 
-  
+
+do_run_iters = 100
 def do_run(train_op):
   sess = setup_session()
   observed_losses = []
   u.reset_time()
-  for i in range(100):
+  for i in range(do_run_iters):
     loss0 = sess.run(loss)
     print(loss0)
     observed_losses.append(loss0)
@@ -425,7 +426,12 @@ if __name__ == '__main__':
   lr_holder = tf.placeholder(dtype=dtype, shape=())
   lr = tf.Variable(lr_holder, dtype=dtype)
 
-
+  # run tests
+  do_run_iters = 5
+  result = newton(1.0)
+  expected_result = [8.9023744225439743e-05, 0.060120791316053412, 0.0059295249954177918, 1.9856240803246437e-05, 2.7125563957575423e-10]
+  u.check_equal(result, expected_result)
+  
   # 720 ms per step
   # result = newton(1.0)
   # np.savetxt("data/newton.csv", result, delimiter=',')
@@ -479,6 +485,6 @@ if __name__ == '__main__':
   # np.savetxt("data/rotations_comparison_fast_bad.csv", runs, delimiter=',')
 
 
-  result = natural_bd_sqrt(lr0=0.01, num_samples=5)
-  np.savetxt("data/natural_bd_sqrt.csv", result, delimiter=',')
+  # result = natural_bd_sqrt(lr0=0.05, num_samples=5)
+  # np.savetxt("data/natural_bd_sqrt.csv", result, delimiter=',')
   

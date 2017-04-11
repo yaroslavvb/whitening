@@ -55,6 +55,7 @@ def test_sgd():
   observed_losses = []
   for i in range(100):
     loss0, _ = sess.run([loss, train_op])
+    print(loss0)
     observed_losses.append(loss0)
 
   # from accompanying notebook

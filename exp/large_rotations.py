@@ -863,7 +863,7 @@ def rotations2_natural_sampled_bd(num_samples=1):
   B = [0]*(n+1)
   B2 = [0]*(n+1)
   B[n] = -err/dsize
-  B2[n] = tf.random_normal((f(n), dsize*num_samples), 0, 1, dtype=dtype)
+  B2[n] = tf.random_normal((f(n), dsize*num_samples), 0, 1, seed=0,dtype=dtype)
   for i in range(n-1, -1, -1):
     B[i] = tf.matmul(tf.transpose(W[i+1]), B[i+1], name="B"+str(i))
     B2[i] = tf.matmul(tf.transpose(W[i+1]), B2[i+1], name="B2"+str(i))
@@ -994,7 +994,8 @@ def rotations2_natural_sampled_kfac(num_samples=1):
   B = [0]*(n+1)
   B2 = [0]*(n+1)
   B[n] = -err/dsize
-  B2[n] = tf.random_normal((f(n), dsize*num_samples), 0, 1, dtype=dtype)
+  B2[n] = tf.random_normal((f(n), dsize*num_samples), 0, 1, seed=0,
+                           dtype=dtype)
   for i in range(n-1, -1, -1):
     B[i] = tf.matmul(tf.transpose(W[i+1]), B[i+1], name="B"+str(i))
     B2[i] = tf.matmul(tf.transpose(W[i+1]), B2[i+1], name="B2"+str(i))
@@ -1096,12 +1097,12 @@ if __name__=='__main__':
   # 3.35051072823e-06
   # Times: min: 53.70, median: 54.86, times: 2227.11,55.40,54.90,54.48,53.70,54.63,54.65,54.01,54.86,54.61,56.28,53.92,54.16,54.86,59.86,56.55,55.31,55.55,54.40,55.37
   # Graph: 25908 ops, 9 MBs
-  #  rotations2_natural_sampled_bd(num_samples=5)
-  #  sys.exit()
+  rotations2_natural_sampled_bd(num_samples=5)
+  sys.exit()
 
   
   # This one doesn't like to converge
-  # rotations2_natural_empirical()
+  #  rotations2_natural_empirical()
   #  sys.exit()
 
   # 8.90237442254e-05
@@ -1151,11 +1152,22 @@ if __name__=='__main__':
   # 7.60852440119e-06
   # Times: min: 644.11, median: 676.36, times: 2746.84,689.03,680.05,654.87,664.90,684.73,662.71,678.19,675.54,697.81,684.55,674.66,683.50,672.87,680.99,677.19,659.26,666.27,644.11,645.98
 
-  rotations2_natural_sampled(num_samples=5)
-  sys.exit()
+  #  rotations2_natural_sampled(num_samples=5)
+  #  sys.exit()
   
   #  rotations1_gradient_test()
-  
+
+  # 8.90237442254e-05
+  # 7.44754842309e-05
+  # 6.07188055395e-05
+  # 4.85707459409e-05
+  # 3.71629941264e-05
+  # 3.19664558068e-05
+  # 2.66714124716e-05
+  # 2.08797397985e-05
+  # 1.7505657786e-05
+  # 1.4442734761e-05
+  # 1.22210253908e-05
   #  rotations2_gradient()
   #  8.90237442254e-05
   #  3.26578279099e-05
@@ -1174,7 +1186,8 @@ if __name__=='__main__':
   # 2.32230833013e-10
   # 7.44823949424e-20
 
-  #  rotations2_newton()
+  rotations2_newton()
+  sys.exit()
   
   #  8.90237442254e-05
   #  3.56141425886e-06
