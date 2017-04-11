@@ -8,6 +8,8 @@
 # https://www.wolframcloud.com/objects/3a204c89-5dfe-410f-9515-f7bf55e180bc
 
 import numpy as np
+import os
+import sys
 import tensorflow as tf
 import util as u
 from util import t  # transpose
@@ -15,7 +17,7 @@ from util import c2v
 from util import v2c
 from util import v2c_np
 from util import v2r
-from util import kr  # kroneckre
+from util import kr  # kronecker
 from util import Kmat # commutation matrix
 
 dtype = np.float64
@@ -725,8 +727,9 @@ if __name__=='__main__':
   
   # Relu Newton test assumes all examples have same relu pattern, so
   # 12% of Hessian entries are wrong, skip for now.
-  # relu_newton_test()
+  #  # relu_newton_test()
 
   simple_newton_bd_test()
   simple_newton_kfac_test()
-  print("All tests passed")
+  print("%s tests passed" %(sys.argv[0]))
+

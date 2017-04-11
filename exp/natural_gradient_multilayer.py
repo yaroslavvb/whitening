@@ -752,6 +752,7 @@ def newton_test():
   # inverse fisher preconditioner
   grads = tf.concat([khatri_rao(A[i], B[i]) for i in range(1, n+1)], axis=0)
   fisher = grads @ tf.transpose(grads) / dsize
+  # outer_sum[i] for i in range(1, n+1)
   ifisher = pseudo_inverse(fisher)
 
   Wf_copy = tf.Variable(tf.zeros(dtype=dtype, shape=Wf.shape,
@@ -922,4 +923,5 @@ if __name__ == '__main__':
   gd_manual_vectorized_test()
   natural_gradient_test()
   relu_manual_vectorized_test()
+  print("%s tests passed" %(sys.argv[0]))
   #  newton_test()

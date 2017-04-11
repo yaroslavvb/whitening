@@ -82,7 +82,7 @@ def Identity(n, dtype=default_dtype):
   return tf.diag(tf.ones((n,), dtype=dtype))
 
 # partitions numpy array into sublists of given sizes
-def partition_np(vec, sizes):
+def partition_list_np(vec, sizes):
   assert np.sum(sizes) == len(vec)
   splits = []
   current_idx = 0
@@ -97,20 +97,21 @@ def chunks(l, n):
   for i in range(0, len(l), n):
     yield l[i:i + n]
 
-def partition(vec, sizes):
-  assert len(vec.shape) == 1
-  assert np.sum(sizes) == vec.shape[0]
+def partition_list(l, sizes):
+  """Partitions l into sublists of given sizes."""
+  assert len(l.shape) == 1
+  assert np.sum(sizes) == l.shape[0]
   splits = []
   current_idx = 0
   for i in range(len(sizes)):
-    splits.append(vec[current_idx: current_idx+sizes[i]])
+    splits.append(l[current_idx: current_idx+sizes[i]])
     current_idx += sizes[i]
   return splits
 
-def partition_test():
+def partition_list_test():
   vec = tf.constant([1,2,3,4,5])
   sess = tf.Session()
-  result = sess.run(partition(vec, [3, 2]))
+  result = sess.run(partition_list(vec, [3, 2]))
   check_equal(result[0], [1,2,3])
   assert (result[1] == [4,5]).all()
 
@@ -211,7 +212,7 @@ def unflatten_np(Wf, fs):
   dims = [(fs[i+1],fs[i]) for i in range(len(fs)-1)]
   sizes = [s[0]*s[1] for s in dims]
   assert np.sum(sizes)==len(Wf)
-  Wsf = partition(Wf, sizes)
+  Wsf = partition_list_np(Wf, sizes)
   Ws = [unvectorize_np(Wsf[i], dims[i][0]) for i in range(len(sizes))]
   return Ws
 
@@ -224,7 +225,7 @@ def unflatten(Wf, fs):
   sizes = [s[0]*s[1] for s in dims]
   assert len(Wf.shape) == 1
   assert np.sum(sizes)==Wf.shape[0]
-  Wsf = partition(Wf, sizes)
+  Wsf = partition_list(Wf, sizes)
   Ws = [unvec(Wsf[i], dims[i][0]) for i in range(len(sizes))]
   return Ws
 
@@ -419,6 +420,24 @@ def block_diagonal_inverse(blocks):
                                 dtype=dtype)
   return result
         
+def block_diagonal_inverse_sqrt(blocks):
+  assert_rectangular(blocks)
+  num_rows = len(blocks)
+  num_cols = len(blocks[0])
+
+  result = empty_grid(num_rows, num_cols)
+  dtype = blocks[0][0].dtype   # TODO: assert same dtype
+  
+  for i in range(len(blocks)):
+    for j in range(len(blocks[0])):
+      block = blocks[i][j]
+      if i == j:
+        result[i][j] = pseudo_inverse_sqrt(block)
+      else:
+        result[i][j] = tf.zeros(shape=block.get_shape(),
+                                dtype=dtype)
+  return result
+        
 def block_diagonal_inverse_test():
   sess = tf.Session()
   blocks = [[2*Identity(3), tf.ones((3, 1))],
@@ -470,10 +489,11 @@ if __name__=='__main__':
   concat_blocks_test()
   kronecker_cols_test()
   khatri_rao_test()
-  partition_test()
+  partition_list_test()
   unvectorize_test()
   unflatten_test()
   vectorize_test()
   block_diagonal_inverse_test()
   #outer_sum_test()
   partition_matrix_evenly_test()
+  print("%s tests passed" %(sys.argv[0]))
