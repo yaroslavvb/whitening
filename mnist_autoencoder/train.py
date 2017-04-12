@@ -16,6 +16,7 @@ os.environ['CUDA_VISIBLE_DEVICES']='0'
 
 import tensorflow as tf
 import util as u
+from util import t  # transpose
 
 
 def KL_divergence(x, y):
@@ -161,6 +162,97 @@ def profiled_run(tensors):
   run_counter+=1
   return result
 
+
+def manual_gradient_test():
+  """Construct sparse autoencoder loss and gradient."""
+
+  np.random.seed(0)
+  tf.set_random_seed(0)
+
+  lambda_, sparsity_param, beta = 3e-3, 0.1, 3
+
+  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
+  train_labels = load_MNIST.load_MNIST_labels('data/train-labels-idx1-ubyte')
+
+  dsize = 10000
+  patches = train_images[:,:dsize];
+  X0 = transposeImageCols(patches)
+  fs = [dsize, 28*28, 196, 28*28]
+  # W0f = W_init(fs[2], fs[3])
+  # W0f = np.random.random((fs[1]*fs[2]+fs[2]*fs[3],))
+  # W0f = np.ones((fs[1]*fs[2]+fs[2]*fs[3],), dtype=dtype)
+  opttheta = scipy.io.loadmat("opttheta.mat")["opttheta"].flatten().astype(dtype)
+  W0f = opttheta[:fs[1]*fs[2]+fs[2]*fs[3]]
+
+  assert X0.shape[1] == fs[0]
+  def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
+
+  assert fs[1] == fs[3]
+  dsize = f(-1)
+
+
+  init_dict = {}
+  def init_var(val, name, trainable=True):
+    holder = tf.placeholder(dtype, shape=val.shape, name=name+"_holder")
+    var = tf.Variable(holder, name=name+"_var", trainable=trainable)
+    init_dict[holder] = val
+    return var
+
+  Wf = init_var(W0f, "Wf")
+  W = u.unflatten(Wf, fs[1:])
+  X = init_var(X0, "X", False)
+  # rename data to X
+  W.insert(0, X0)
+  [W0, W1, W2] = W
+    
+  # Number of training examples
+  a1 = X
+  
+  # Forward propagation
+  z2 = tf.matmul(W1, a1)
+  a2 = tf.sigmoid(z2)
+  z3 = tf.matmul(W2, a2)
+  a3 = tf.sigmoid(z3)
+  
+  # Sparsity
+  rho_hat = tf.reduce_sum(a2, axis=1, keep_dims=True)/dsize
+  rho = tf.constant(sparsity_param, dtype=dtype)
+
+  # Cost function
+  error_term = tf.reduce_sum(tf.square(a3 - a1)) / (2 * dsize)
+  sparsity_term = beta * tf.reduce_sum(KL_divergence(rho, rho_hat))
+  l2_term = (lambda_ / 2) * (tf.reduce_sum(tf.square(W1)) + \
+                             tf.reduce_sum(tf.square(W2)))
+  cost = error_term  + l2_term # + sparsity_term
+  
+  sess = tf.InteractiveSession()
+  sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
+  print(cost.eval())
+
+  grad = tf.gradients(cost, [Wf])[0]
+  grad0f = grad.eval()
+  grad0s = u.unflatten_np(grad0f, fs[1:])
+
+  Wf2 = sess.run(Wf-grad)
+  print(grad.eval())
+
+  # STOP HERE
+  #  rho_hat = np.sum(a2, axis=1) / m
+  #  rho = np.tile(sparsity_param, hidden_size)
+  #  sparsity_delta = np.tile(- rho / rho_hat + (1 - rho) / (1 - rho_hat), (m, 1)).T / m
+
+  delta3 = (a3-a1)*a3*(1-a3)/dsize
+  delta2 = (t(W2) @ delta3) * a2 * (1 - a2)
+  #  delta2 = (W2.T.dot(delta3)) * a2 * (1 - a2)
+  W1grad = delta2 @ t(a1) + lambda_ * W1
+  W2grad = delta3 @ t(a2) + lambda_ * W2
+  print("Error 1")
+  print(np.sum(np.square((W1grad.eval() - grad0s[0]))))
+  print("Error 2")
+  print(np.sum(np.square((W2grad.eval() - grad0s[1]))))
+  assert u.frobenius_np((W1grad.eval() - grad0s[0]))<1e-6
+  assert u.frobenius_np((W2grad.eval() - grad0s[1]))<1e-5
+
 sess = None
 
 #  min: 9.67, median: 11.55
@@ -181,7 +273,7 @@ def simple_train():
   train_step = tf.train.GradientDescentOptimizer(0.1).minimize(cost)
   
   #  train_step = tf.train.AdamOptimizer(0.1).minimize(cost)
-  do_images = True
+  do_images = False
 
   sess = tf.InteractiveSession()
   sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
@@ -209,6 +301,7 @@ def simple_train():
   cost0, _ = profiled_run([cost, train_step])
 
 if __name__=='__main__':
-  dtype = tf.float32
+  dtype = np.float32
   
-  simple_train()
+  #  simple_train()
+  manual_gradient_test()
