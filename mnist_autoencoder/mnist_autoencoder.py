@@ -49,16 +49,16 @@ W1 = opttheta[:hiddenSize*visibleSize].reshape((hiddenSize, visibleSize),order='
 display_network.display_network(transposeImageCols(W1.transpose()), "sample2.jpg")
 
 patchesTransposed = transposeImageCols(patches)
-J1 = lambda x: sparse_autoencoder.sparse_autoencoder_cost_matlab(x, visibleSize, hiddenSize, lambda_, sparsityParam, beta, patchesTransposed)
-cost,grad=J1(opttheta)
-print("My cost1 %.3f" %(cost))
+# J1 = lambda x: sparse_autoencoder.sparse_autoencoder_cost_matlab(x, visibleSize, hiddenSize, lambda_, sparsityParam, beta, patchesTransposed)
+# cost,grad=J1(opttheta)
+# print("My cost1 %.3f" %(cost))
 
-J2 = lambda x: sparse_autoencoder.sparse_autoencoder_cost(x, visibleSize, hiddenSize, lambda_, sparsityParam, beta, patchesTransposed)
-cost,grad=J2(opttheta)
-print("My cost2 %.3f" %(cost))
+# J2 = lambda x: sparse_autoencoder.sparse_autoencoder_cost(x, visibleSize, hiddenSize, lambda_, sparsityParam, beta, patchesTransposed)
+# cost,grad=J2(opttheta)
+# print("My cost2 %.3f" %(cost))
 
 cost3 = sparse_autoencoder.sparse_autoencoder_cost_tf(opttheta, visibleSize, hiddenSize, lambda_, sparsityParam, beta, patchesTransposed)
-print("My cost3 %.3f" %(cost3))
+print("My cost4 %.3f" %(cost3))
 
 matlab_vars = scipy.io.loadmat("opttheta_vars.mat")
 print("Matlab cost %.3f" %(matlab_vars["cost"]),)

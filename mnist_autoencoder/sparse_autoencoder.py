@@ -178,69 +178,120 @@ def sparse_autoencoder_cost_matlab(theta, visible_size, hidden_size,
 
     return cost, grad
 
-def sparse_autoencoder_cost_tf(theta, visible_size, hidden_size, lambda_, sparsity_param, beta, data):
+def cost1(theta, visible_size, hidden_size, lambda_, sparsity_param, beta, data0):
+  """Construct sparse autoencoder loss, return tensor."""
   
-    W1 = theta[0:hidden_size * visible_size].reshape(hidden_size, visible_size, order='F')
-    W2 = theta[hidden_size * visible_size:2 * hidden_size * visible_size].reshape(visible_size, hidden_size, order='F')
-    b1 = theta[2 * hidden_size * visible_size:2 * hidden_size * visible_size + hidden_size]
-    b2 = theta[2 * hidden_size * visible_size + hidden_size:]
+  W10 = theta[0:hidden_size * visible_size].reshape(hidden_size, visible_size, order='F')
+  W20 = theta[hidden_size * visible_size:2 * hidden_size * visible_size].reshape(visible_size, hidden_size, order='F')
+  b10 = theta[2 * hidden_size * visible_size:2 * hidden_size * visible_size + hidden_size]
+  b20 = theta[2 * hidden_size * visible_size + hidden_size:]
 
-    init_dict = {}
-    def init_var(val, name):
-      holder = tf.placeholder(dtype, shape=val.shape, name=name+"_holder")
-      var = tf.Variable(holder, name=name+"_var")
-      init_dict[holder] = val
-      return var
+  init_dict = {}
+  def init_var(val, name, trainable=True):
+    holder = tf.placeholder(dtype, shape=val.shape, name=name+"_holder")
+    var = tf.Variable(holder, name=name+"_var", trainable=trainable)
+    init_dict[holder] = val
+    return var
 
-    W1_ = init_var(W1, "W1")
-    W2_ = init_var(W2, "W2")
-    b1_ = init_var(np.expand_dims(b1, 0), "b1")
-    b2_ = init_var(np.expand_dims(b2, 0), "b2")
-    data_ = init_var(data, "data")
-    sess = tf.InteractiveSession()
-    sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
+  W1 = init_var(W10, "W1")
+  W2 = init_var(W20, "W2")
+  b1 = init_var(u.v2c_np(b10), "b1")
+  b2 = init_var(u.v2c_np(b20), "b2")
+  data = init_var(data0, "data", False)
+  
+  sess = tf.InteractiveSession()
+  sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
     
-    # Number of training examples
-    m = data.shape[1]
-    a1 = data
-    a1_ = data_
+  # Number of training examples
+  # todo Rename data to x
+  m = data0.shape[1]
+  a1 = data
+  
+  # Forward propagation
+  z2 = tf.matmul(W1, a1) + b1
+  a2 = tf.sigmoid(z2)
+  z3 = tf.matmul(W2, a2) + b2
+  a3 = tf.sigmoid(z3)
+  
+  # Sparsity
+  rho_hat = tf.reduce_sum(a2, axis=1, keep_dims=True)/m
+  rho = tf.constant(sparsity_param, dtype=dtype)
 
-    # Forward propagation
-    z2 = W1.dot(a1) + np.tile(b1, (m, 1)).transpose()
-    # ValueError: Dimensions must be equal, but are 10000 and 1960000 for 'add' (op: 'Add') with input shapes: [196,10000], [1,1960000].
-    z2_ = tf.matmul(W1_, a1_) + t(tf.tile(b1_, (m, 1)))
+  # Cost function
+  cost = tf.reduce_sum((a3 - a1) ** 2) / (2 * m) + \
+          (lambda_ / 2) * (tf.reduce_sum(W1 ** 2) + \
+                           tf.reduce_sum(W2 ** 2)) + \
+                           beta * tf.reduce_sum(KL_divergence_tf(rho, rho_hat))
+  return init_dict, cost
+  
+def sparse_autoencoder_cost_tf(theta, visible_size, hidden_size, lambda_, sparsity_param, beta, data):
 
-    ## STOP HERE
-    a2 = sigmoid(z2)
-    a2_ = tf.sigmoid(z2_)
-    z3 = W2.dot(a2) + np.tile(b2, (m, 1)).transpose()
-    z3_ = tf.matmul(W2_, a2_) + t(tf.tile(b2_, (m, 1)))
-    a3 = sigmoid(z3)
-    a3_ = tf.sigmoid(z3_)
 
-    # Sparsity
-    rho_hat = np.sum(a2, axis=1) / m
-    rho_hat_ = tf.reduce_sum(a2_, axis=1, keep_dims=True)/m
-    rho = np.tile(sparsity_param, hidden_size)
-    # ValueError: Shape must be rank 1 but is rank 0 for 'Tile_2' (op: 'Tile') with input shapes: [], [].
-    rho_ = tf.constant(sparsity_param, dtype=dtype)
-    #tf.ones((hidden_size, 1), dtype=dtype)*sparsity_param
+  # TODO: get rid of b
+  #  def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
+  #  fs = [10000, 28*28, 196, 28*28]
+  #  n = len(fs)-2
+  #  W = [None]*n
+  
+  W1 = theta[0:hidden_size * visible_size].reshape(hidden_size, visible_size, order='F')
+  W2 = theta[hidden_size * visible_size:2 * hidden_size * visible_size].reshape(visible_size, hidden_size, order='F')
+  b1 = theta[2 * hidden_size * visible_size:2 * hidden_size * visible_size + hidden_size]
+  b2 = theta[2 * hidden_size * visible_size + hidden_size:]
 
-    u.check_equal(sess.run(a3_), a3)
-    u.check_equal(sess.run(a2_), a2)
-    u.check_equal(sess.run(a1_), a1)
-    u.check_equal(tf.reduce_sum(KL_divergence_tf(rho_, rho_hat_)).eval(),
-                  np.sum(KL_divergence(rho, rho_hat)))
+  init_dict = {}
+  def init_var(val, name):
+    holder = tf.placeholder(dtype, shape=val.shape, name=name+"_holder")
+    var = tf.Variable(holder, name=name+"_var")
+    init_dict[holder] = val
+    return var
+
+  W1_ = init_var(W1, "W1")
+  W2_ = init_var(W2, "W2")
+  b1_ = init_var(u.v2c_np(b1), "b1")
+  b2_ = init_var(u.v2c_np(b2), "b2")
+  data_ = init_var(data, "data")
+  sess = tf.InteractiveSession()
+  sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
     
-    # Cost function
-    cost = np.sum((a3 - a1) ** 2) / (2 * m) + \
-           (lambda_ / 2) * (np.sum(W1 ** 2) + np.sum(W2 ** 2)) + \
-           beta * np.sum(KL_divergence(rho, rho_hat))
-    cost_ = tf.reduce_sum((a3_ - a1_) ** 2) / (2 * m) + \
-           (lambda_ / 2) * (tf.reduce_sum(W1_ ** 2) + \
-                            tf.reduce_sum(W2_ ** 2)) + \
-           beta * tf.reduce_sum(KL_divergence_tf(rho_, rho_hat_))
-    return sess.run(cost_)
+  # Number of training examples
+  m = data.shape[1]
+  a1 = data
+  a1_ = data_
+  
+  # Forward propagation
+  z2 = W1.dot(a1) + np.tile(b1, (m, 1)).transpose()
+  z2_ = tf.matmul(W1_, a1_) + b1_
+  
+  a2 = sigmoid(z2)
+  a2_ = tf.sigmoid(z2_)
+  z3 = W2.dot(a2) + np.tile(b2, (m, 1)).transpose()
+  z3_ = tf.matmul(W2_, a2_) + b2_
+  a3 = sigmoid(z3)
+  a3_ = tf.sigmoid(z3_)
+  
+  # Sparsity
+  rho_hat = np.sum(a2, axis=1) / m
+  rho_hat_ = tf.reduce_sum(a2_, axis=1, keep_dims=True)/m
+  rho = np.tile(sparsity_param, hidden_size)
+  # ValueError: Shape must be rank 1 but is rank 0 for 'Tile_2' (op: 'Tile') with input shapes: [], [].
+  rho_ = tf.constant(sparsity_param, dtype=dtype)
+  #tf.ones((hidden_size, 1), dtype=dtype)*sparsity_param
+
+  u.check_equal(sess.run(a3_), a3)
+  u.check_equal(sess.run(a2_), a2)
+  u.check_equal(sess.run(a1_), a1)
+  u.check_equal(tf.reduce_sum(KL_divergence_tf(rho_, rho_hat_)).eval(),
+                np.sum(KL_divergence(rho, rho_hat)))
+    
+  # Cost function
+  cost = np.sum((a3 - a1) ** 2) / (2 * m) + \
+         (lambda_ / 2) * (np.sum(W1 ** 2) + np.sum(W2 ** 2)) + \
+         beta * np.sum(KL_divergence(rho, rho_hat))
+  cost_ = tf.reduce_sum((a3_ - a1_) ** 2) / (2 * m) + \
+          (lambda_ / 2) * (tf.reduce_sum(W1_ ** 2) + \
+                           tf.reduce_sum(W2_ ** 2)) + \
+                           beta * tf.reduce_sum(KL_divergence_tf(rho_, rho_hat_))
+  return sess.run(cost_)
 
 
 

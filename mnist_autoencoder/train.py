@@ -10,10 +10,13 @@ import matplotlib # for matplotlib.cm.gray
 from matplotlib.pyplot import imshow
 import math
 import time
+
+import os
+os.environ['CUDA_VISIBLE_DEVICES']='0'
+
 import tensorflow as tf
 import util as u
 
-from tensorflow.python.client import timeline
 
 def KL_divergence(x, y):
   return x * tf.log(x / y) + (1 - x) * tf.log((1 - x) / (1 - y))
@@ -141,6 +144,7 @@ def cost2(W0f, fs, lambda_, sparsity_param, beta, X0):
 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
 run_options.output_partition_graphs = True
 run_counter = 0
+from tensorflow.python.client import timeline
 def profiled_run(tensors):
   """Calls session.run, and saves timeline information to file."""
   global run_counter
@@ -157,9 +161,11 @@ def profiled_run(tensors):
   run_counter+=1
   return result
 
+sess = None
 
 #  min: 9.67, median: 11.55
 def simple_train():
+  global sess
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
   train_labels = load_MNIST.load_MNIST_labels('data/train-labels-idx1-ubyte')
 
@@ -175,20 +181,27 @@ def simple_train():
   train_step = tf.train.GradientDescentOptimizer(0.1).minimize(cost)
   
   #  train_step = tf.train.AdamOptimizer(0.1).minimize(cost)
+  do_images = True
 
   sess = tf.InteractiveSession()
   sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
 
   u.reset_time()
+  old_cost = sess.run(cost)
+  old_i = 0
+  frame_count = 0
   for i in range(10000):
     cost0, _ = sess.run([cost, train_step])
     if i%100 == 0:
       print(cost0)
       # filters are transposed in visualization
-    if i%1000 == 0:
+    if ((old_cost - cost0)/old_cost > 0.05 or i-old_i>50) and do_images:
       Wf_ = sess.run("Wf_var/read:0")
       W1_ = u.unflatten_np(Wf_, fs[1:])[0]
-      display_network.display_network(W1_.T, filename="weights-%d.png"%(i,))
+      display_network.display_network(W1_.T, filename="weights-%03d.png"%(frame_count,))
+      frame_count+=1
+      old_cost = cost0
+      old_i = i
     u.record_time()
 
   u.summarize_time()
