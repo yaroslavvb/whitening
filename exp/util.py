@@ -451,11 +451,14 @@ def summarize_time(time_list=None):
     time_list = global_time_list
     
   time_list = 1000*np.array(time_list)  # get seconds, convert to ms
-  min = np.min(time_list)
-  median = np.median(time_list)
-  formatted = ["%.2f"%(d,) for d in time_list]
-  print("Times: min: %.2f, median: %.2f, times: %s"%(min, median,",".join(formatted)))
-  
+  if len(time_list)>0:
+    min = np.min(time_list)
+    median = np.median(time_list)
+    formatted = ["%.2f"%(d,) for d in time_list[:10]]
+    print("Times: min: %.2f, median: %.2f, times: %s"%(min, median,",".join(formatted)))
+  else:
+    print("Times: <empty>")
+    
 def summarize_graph(g=None):
   if not g:
     g = tf.get_default_graph()
