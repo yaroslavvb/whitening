@@ -119,7 +119,7 @@ if __name__=='__main__':
   grad = u.flatten(dW[1:])
   copy_op = Wf_copy.assign(Wf-lr*grad)
   with tf.control_dependencies([copy_op]):
-    train_op = Wf.assign(Wf_copy)
+    train_op = tf.group(Wf.assign(Wf_copy)) # to make it an op
 
   sess = tf.InteractiveSession()
 
@@ -132,6 +132,7 @@ if __name__=='__main__':
   Wf_restore_op = Wf.assign(Wf2)
   grad2 = init_var(W0f, "grad2")
   grad_save_op = grad2.assign(grad)
+  grad2_norm_op = tf.reduce_sum(tf.square(grad2))
   Wf_step_op = Wf.assign(Wf2 - step_len0*grad2)
   lr_p = tf.placeholder(lr.dtype, lr.shape)
   lr_set = lr.assign(lr_p)
@@ -154,78 +155,47 @@ if __name__=='__main__':
   frame_count = 0
 
   step_lengths = []
-  losses = []
-  do_bt = True  # do backtracking line-search
-  for i in range(1000):
-    cost0, _ = sess.run([cost, train_op])
-    losses.append(cost0)
-    if i>0 and i%50==0:
-      print(cost0)
-      if step_lengths:
-        print("      ", step_lengths[-1])
-    if do_bt and i%10>=0 and i%10<=2:
-      #      save_wf()
-      #      save_grad()
-      
-      # print(cost0)
-      # # do line search
-      # min_lr = -0.1
-      # max_lr = 200.
-      # save_wf()
-      # save_grad()
-      # num_steps = 20
-      # line_search_costs = []
-      # for j in range(num_steps):
-      #   actual_step = min_lr + j*(max_lr-min_lr)/num_steps
-      #   step_wf(actual_step)
-      #   line_search_costs.append([actual_step, cost.eval()-cost0])
-      # u.dump(line_search_costs, "linesearch-%d.csv"%(i,))
-      # restore_wf()
+  costs = []
+  ratios = []
+  do_bt = False  # do backtracking line-search
+  alpha=0.3
+  beta=0.8
+  growth_rate = 1.05
+  for i in range(10000):
+    # save Wf and grad into Wf2 and grad2
+    save_wf()
+    save_grad()
+    cost0 = cost.eval()
+    train_op.run()
+    lr0 = lr.eval()
+    cost1 = cost.eval()
+    #    cost1, _ = sess.run([cost, train_op])
+    target_delta = -alpha*lr0*grad2_norm_op.eval()
+    actual_delta = cost1 - cost0
+    actual_slope = actual_delta/lr0
+    expected_slope = -grad2_norm_op.eval()
 
-      save_wf()
-      save_grad()
-      # do backtracking line search
-      grad2_ = grad2.eval()
-      alpha=0.3
-      beta=0.8
-      cost0 = cost.eval()
+    # ratio of best possible slope to actual slope
+    # don't divide by actual slope because that can be 0
+    slope_ratio = abs(actual_slope)/abs(expected_slope)
+    costs.append(cost0)
+    step_lengths.append(lr0)
+    ratios.append(slope_ratio)
 
-      def f(t):  # returns cost difference along direction
-        step_wf(t)
-        return cost.eval() - cost0
-      t = 1
-      bt_costs = []
-      while True:
-        target_delta = -alpha*t*np.square(grad2_).sum()
-        actual_delta = f(t)
-        bt_costs.append(actual_delta)
-        #        print("Target delta %s, actual delta %s"%(target_delta,
-        #                                                  actual_delta))
-        if actual_delta > target_delta:
-          t = t*beta
-        else:
-          break
-      print("Setting step "+str(t))
-      sess.run(lr_set, feed_dict={lr_p: t})
-      step_lengths.append(t)
-      restore_wf()
+    # don't shrink learning rate once results are very close to minimum
+    if slope_ratio < alpha and abs(target_delta)>1e-6:
+      print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
+      print("Slope optimality %.2f, shrinking learning rate to %.2f"%(slope_ratio, lr0*beta,))
+      sess.run(lr_set, feed_dict={lr_p: lr0*beta})
+    else:
+      # see if our learning rate got too conservative, and increase it
+      if i>0 and i%50 == 0 and slope_ratio>0.99:
+        print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
+        print("Growing learning rate to %.2f"%(lr0*growth_rate))
+        sess.run(lr_set, feed_dict={lr_p: lr0*growth_rate})
+
     u.record_time()
 
-#  u.dump(losses, "losses_regular.csv")
-      
-#  u.dump(losses, "losses_bt.csv")
-#  u.dump(step_lengths, "step_lengths_bt.csv")
-
-# BT search every 10 steps
-#  u.dump(losses, "losses_bt2.csv")
-#  u.dump(step_lengths, "step_lengths_bt2.csv")
-#  u.dump(losses, "losses_bt3.csv")
-#  u.dump(step_lengths, "step_lengths_bt3.csv")
-#  u.summarize_time()
-
-  # double learning rate
-  #  u.dump(losses, "losses_regular2.csv")
-
-  # do 3 backtracking line searches every 10 steps
-  u.dump(losses, "losses_bt4.csv")
-  u.dump(step_lengths, "step_lengths_bt4.csv")
+  u.dump(step_lengths, "step_lengths_ada.csv")
+  u.dump(costs, "costs_ada.csv")
+  u.dump(ratios, "ratios_ada.csv")
