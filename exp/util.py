@@ -4,6 +4,7 @@ import tensorflow as tf
 default_dtype = tf.float64
 
 import numpy as np
+import os
 import sys
 import tensorflow as tf
 import time
@@ -247,9 +248,26 @@ def unflatten_test():
   check_equal(result[1], [[5,7],[6,8]])
   check_equal(result[2], [[9, 10]])
 
+def flatten(Ws):
+  """Inverse of unflatten."""
+  return tf.concat([tf.reshape(vec(W),(-1,)) for W in Ws], axis=0)
 
-def check_equal(a, b, rtol=1e-9, atol=1e-12):
+def flatten_test():
+  vec = tf.constant(list(range(1, 11)))
+  sess = tf.Session()
+  fs = [2,2,2,1]
+  result = unflatten(vec, fs)
+  result2 = flatten(result)
+  check_equal(sess.run(vec), sess.run(result2))
+
+def check_close(a0, b0):
+  return check_equal(a0, b0, rtol=1e-5, atol=1e-9)
+  
+def check_equal(a0, b0, rtol=1e-9, atol=1e-12):
   """Helper function to check that two vectors are equal."""
+
+  a = a0.eval() if hasattr(a0, "eval") else a0
+  b = b0.eval() if hasattr(b0, "eval") else b0
   
   try:
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
@@ -473,13 +491,27 @@ def disable_shape_inference():
 def enable_shape_inference():
   ops.set_shapes_for_outputs = original_shape_func
 
-
 def run_all_tests(module):
   all_functions = inspect.getmembers(module, inspect.isfunction)
   for name,func in all_functions:
     if name.endswith("_test"):
       func()
   print(module.__name__+" tests passed.")
+
+def dump(result, fname):
+  """Save result to file."""
+  result = result.eval() if hasattr(a0, "eval") else result
+  location = os.getcwd()+"/data/"+fname
+  np.savetxt(location, result, delimiter=',')
+  print(location)
+
+
+def frobenius_np(a):
+  return np.sqrt(np.sum(np.square(a)))
+
+def L2(t):
+  """Squared L2 norm of t."""
+  return tf.reduce_sum(tf.square(t))
   
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
