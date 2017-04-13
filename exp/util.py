@@ -500,7 +500,7 @@ def run_all_tests(module):
 
 def dump(result, fname):
   """Save result to file."""
-  result = result.eval() if hasattr(a0, "eval") else result
+  result = result.eval() if hasattr(result, "eval") else result
   location = os.getcwd()+"/data/"+fname
   np.savetxt(location, result, delimiter=',')
   print(location)
