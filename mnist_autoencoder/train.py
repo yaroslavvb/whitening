@@ -33,7 +33,7 @@ def W_uniform(s1, s2):
 
 def cost_and_grad(W0f=None, fs=None, lambda_=3e-3, rho=0.1, beta=3,
                   X0=None, lr=0.1):
-  """Construct sparse autoencoder loss and gradient.
+  """Construct sparse autoencoder loss and gradient. Initialize session
 
   Args:
     W0f: initial value of weights (flattened representation)
@@ -45,10 +45,6 @@ def cost_and_grad(W0f=None, fs=None, lambda_=3e-3, rho=0.1, beta=3,
   Returns:
     cost, train_step
   """
-
-  np.random.seed(0)
-  tf.set_random_seed(0)
-  dtype = np.float32
 
   if not fs:
     fs = [dsize, 28*28, 196, 28*28]
@@ -124,41 +120,58 @@ def cost_and_grad(W0f=None, fs=None, lambda_=3e-3, rho=0.1, beta=3,
   sess.run(tf.global_variables_initializer(), feed_dict=init_dict)
   return cost, train_op
   
-def complex_train_test():
-  
-  np.random.seed(0)
-  
-  do_images = True
 
+if __name__=='__main__':
+  np.random.seed(0)
+  tf.set_random_seed(0)
+  dtype = np.float32
+  
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
   dsize = 10000
   patches = train_images[:,:dsize];
   fs = [dsize, 28*28, 196, 28*28]
   cost, train_op = cost_and_grad(fs=fs, X0=patches, lambda_=3e-3, rho=0.1, beta=3, lr=0.1)
-  
   sess = tf.get_default_session()
+  assert sess
+  
+  if len(sys.argv)>1 and sys.argv[1] == 'maketest':
+    print("Generating test data.")
+    costs = []
+    for i in range(10):
+      cost0, _ = sess.run([cost, train_op])
+      costs.append(cost0)
+    open("data/train_losses.csv", "w").write(str(costs))
 
-
-  u.reset_time()
-  old_cost = sess.run(cost)
-  old_i = 0
-  frame_count = 0
-  for i in range(1000):
-    cost0, _ = sess.run([cost, train_op])
-    if i%100 == 0:
-      print(cost0)
-      # filters are transposed in visualization
-    if ((old_cost - cost0)/old_cost > 0.05 or i-old_i>50) and do_images:
-      Wf_ = sess.run("Wf_var/read:0")
-      W1_ = u.unflatten_np(Wf_, fs[1:])[0]
-      display_network.display_network(W1_.T, filename="pics/weights-%03d.png"%(frame_count,))
-      frame_count+=1
-      old_cost = cost0
-      old_i = i
-    u.record_time()
+  elif len(sys.argv)>1 and sys.argv[1] == 'test':
+    print("Running self test.")
+    costs = []
+    for i in range(10):
+      cost0, _ = sess.run([cost, train_op])
+      costs.append(cost0)
+    u.check_equal(costs, eval(open("data/train_losses.csv").read()), rtol=1e-3,
+                  atol=1e-5)
+    print("Test passed")
+    
+  else:
+    print("Running training.")
+    do_images = True
+    u.reset_time()
+    old_cost = sess.run(cost)
+    old_i = 0
+    frame_count = 0
+    if do_images:
+      os.system("rm pics/weights*.png")
+    for i in range(1000):
+      cost0, _ = sess.run([cost, train_op])
+      if i%100 == 0:
+        print(cost0)
+        if ((old_cost - cost0)/old_cost > 0.1 or i-old_i>50) and do_images:
+          Wf_ = sess.run("Wf_var/read:0")
+          W1_ = u.unflatten_np(Wf_, fs[1:])[0]
+          display_network.display_network(W1_.T, filename="pics/weights-%03d.png"%(frame_count,))
+          frame_count+=1
+          old_cost = cost0
+          old_i = i
+      u.record_time()
 
   u.summarize_time()
-
-  
-if __name__=='__main__':
-  complex_train_test()
