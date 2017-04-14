@@ -182,6 +182,9 @@ if __name__=='__main__':
     step_lengths.append(lr0)
     ratios.append(slope_ratio)
 
+    if i%10 == 0:
+      print("Cost %.2f, expected decrease %.2f, actual decrease, %.2f ratio %.2f"%(cost0, target_delta, actual_delta, slope_ratio))
+
     # don't shrink learning rate once results are very close to minimum
     if slope_ratio < alpha and abs(target_delta)>1e-6:
       print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
@@ -196,6 +199,6 @@ if __name__=='__main__':
 
     u.record_time()
 
-  u.dump(step_lengths, "step_lengths_ada.csv")
-  u.dump(costs, "costs_ada.csv")
-  u.dump(ratios, "ratios_ada.csv")
+#  u.dump(step_lengths, "step_lengths_ada.csv")
+#  u.dump(costs, "costs_ada.csv")
+#  u.dump(ratios, "ratios_ada.csv")
