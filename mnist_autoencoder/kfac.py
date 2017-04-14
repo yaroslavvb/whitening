@@ -73,7 +73,7 @@ if __name__=='__main__':
     init_dict[holder] = val
     return var
 
-  lr = init_var(0.1, "lr")
+  lr = init_var(0.2, "lr")
   Wf = init_var(W0f, "Wf", True)
   Wf_copy = init_var(W0f, "Wf_copy")
   W = u.unflatten(Wf, fs[1:])
@@ -196,8 +196,9 @@ if __name__=='__main__':
   growth_rate = 1.05  # how much to grow when too conservative
 
   sess.run(whitenA[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
+  #  sess.run(whitenB[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
   
-  for i in range(100):
+  for i in range(1000):
     # save Wf and grad into Wf2 and grad_copy
     save_wf()
     save_grad()  # => grad_copy
@@ -223,10 +224,15 @@ if __name__=='__main__':
     step_lengths.append(lr0)
     ratios.append(slope_ratio)
 
+    if i%10==0:
+      print("Computing second set of whitening matrices.")
+      # 200 ms
+      sess.run(whitenA[2].assign(u.pseudo_inverse_sqrt(Acov[2],eps=1e-20)))
+
     #Cost 315.96, expected decrease -308.26, actual decrease, -191.43 ratio 0.19
     #Cost 315.96, expected decrease -5.67, actual decrease, -191.43 ratio 10.13
     if i%10 == 0:
-      print("Cost %.2f, expected decrease %.2f, actual decrease, %.2f ratio %.2f"%(cost0, expected_delta, actual_delta, slope_ratio))
+      print("Cost %.2f, expected decrease %.3f, actual decrease, %.3f ratio %.2f"%(cost0, expected_delta, actual_delta, slope_ratio))
 #      for layer_num in range(1, n+1):
 #        u.dump(Acov[layer_num], "Acov-%d-%d.csv"%(layer_num, i,))
 #        u.dump(Bcov[layer_num], "Bcov-%d-%d.csv"%(layer_num, i,))
@@ -243,12 +249,14 @@ if __name__=='__main__':
       sess.run(lr_set, feed_dict={lr_p: lr0*beta})
     else:
       # see if our learning rate got too conservative, and increase it
-      if i>0 and i%50 == 0 and slope_ratio>0.99:
+      # 99 was ideal for gradient
+#      if i>0 and i%50 == 0 and slope_ratio>0.99:
+      if i>0 and i%50 == 0 and slope_ratio>0.90:
         print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
         print("Growing learning rate to %.2f"%(lr0*growth_rate))
         sess.run(lr_set, feed_dict={lr_p: lr0*growth_rate})
 
     u.record_time()
 
-  u.dump(costs, "costs.csv")
+  u.dump(costs, "costs2.csv")
   u.summarize_time()
