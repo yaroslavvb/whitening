@@ -106,19 +106,26 @@ if __name__=='__main__':
   rho_hat = tf.reduce_sum(A[2], axis=1, keep_dims=True)/dsize
 
   # B[i] = backprops needed to compute gradient of W[i]
+  # B2[i] = synthetic backprops for natural gradient
   B = [None]*(n+1)
+  B2 = [None]*(n+1)
   B[n] = err*d_sigmoid(A[n+1])
+  B2[n] = tf.random_normal((f(n), f(-1)), dtype=dtype)*d_sigmoid(A[n+1])
   for i in range(n-1, -1, -1):
     backprop = t(W[i+1]) @ B[i+1]
+    backprop2 = t(W[i+1]) @ B2[i+1]
     if i == 1:
       backprop += beta*d_kl(rho, rho_hat)
+      backprop2 += beta*d_kl(rho, rho_hat)
     B[i] = backprop*d_sigmoid(A[i+1])
+    B2[i] = backprop2*d_sigmoid(A[i+1])
 
   # dW[i] = gradient of W[i]
   dW = [None]*(n+1)
   dW2 = [None]*(n+1)
   Acov = [None]*(n+1)
-  Bcov = [None]*(n+1)
+  Bcov = [None]*(n+1)    # empirical covariances
+  Bcov2 = [None]*(n+1)   # natural gradient sampled covariances
   whitenA = [None]*(n+1)
   whitenB = [None]*(n+1)
   for i in range(n+1):
@@ -131,8 +138,7 @@ if __name__=='__main__':
       dW2[i] = (B[i]) @ t(A[i])/dsize
     Acov[i] = A[i]@t(A[i])/dsize
     Bcov[i] = B[i]@t(B[i])/dsize
-    
-
+    Bcov2[i] = B2[i]@t(B2[i])/dsize
 
   # Cost function
   reconstruction = u.L2(err) / (2 * dsize)
@@ -225,12 +231,12 @@ if __name__=='__main__':
     ratios.append(slope_ratio)
 
     if i%10==0:
-      print("Computing second set of whitening matrices.")
-      # 200 ms
+      # each is about 200 ms
       sess.run(whitenA[2].assign(u.pseudo_inverse_sqrt(Acov[2],eps=1e-20)))
+      sess.run(whitenB[2].assign(u.pseudo_inverse_sqrt(Bcov2[2],eps=1e-20)))
+      # Get NaN's if I whiten B[1] as well
+      #      sess.run(whitenB[1].assign(u.pseudo_inverse_sqrt(Bcov2[1],eps=1e-20)))
 
-    #Cost 315.96, expected decrease -308.26, actual decrease, -191.43 ratio 0.19
-    #Cost 315.96, expected decrease -5.67, actual decrease, -191.43 ratio 10.13
     if i%10 == 0:
       print("Cost %.2f, expected decrease %.3f, actual decrease, %.3f ratio %.2f"%(cost0, expected_delta, actual_delta, slope_ratio))
 #      for layer_num in range(1, n+1):
@@ -256,7 +262,16 @@ if __name__=='__main__':
         print("Growing learning rate to %.2f"%(lr0*growth_rate))
         sess.run(lr_set, feed_dict={lr_p: lr0*growth_rate})
 
+    if do_images and i>0 and i%100==0:
+      Wf_ = sess.run("Wf_var/read:0")
+      W1_ = u.unflatten_np(Wf_, fs[1:])[0]
+      display_network.display_network(W1_.T, filename="pics/weights-%03d.png"%(frame_count,))
+      frame_count+=1
+      old_cost = cost0
+      old_i = i
+
+
     u.record_time()
 
-  u.dump(costs, "costs2.csv")
+  u.dump(costs, "costs4.csv")
   u.summarize_time()
