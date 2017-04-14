@@ -1,4 +1,4 @@
-use_preconditioner = False
+use_preconditioner = True
 
 """Do line searches, dump csvs"""
 
@@ -209,6 +209,7 @@ if __name__=='__main__':
     #    cost1, _ = sess.run([cost, train_op])
     #    target_delta = -alpha*lr0*grad_copy_norm_op.eval()
     target_delta = -alpha*lr0*grad2_dot_grad_op.eval()
+    expected_delta = -lr0*grad2_dot_grad_op.eval()
 
     actual_delta = cost1 - cost0
     actual_slope = actual_delta/lr0
@@ -225,7 +226,7 @@ if __name__=='__main__':
     #Cost 315.96, expected decrease -308.26, actual decrease, -191.43 ratio 0.19
     #Cost 315.96, expected decrease -5.67, actual decrease, -191.43 ratio 10.13
     if i%10 == 0:
-      print("Cost %.2f, expected decrease %.2f, actual decrease, %.2f ratio %.2f"%(cost0, target_delta, actual_delta, slope_ratio))
+      print("Cost %.2f, expected decrease %.2f, actual decrease, %.2f ratio %.2f"%(cost0, expected_delta, actual_delta, slope_ratio))
 #      for layer_num in range(1, n+1):
 #        u.dump(Acov[layer_num], "Acov-%d-%d.csv"%(layer_num, i,))
 #        u.dump(Bcov[layer_num], "Bcov-%d-%d.csv"%(layer_num, i,))

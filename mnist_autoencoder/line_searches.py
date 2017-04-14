@@ -171,6 +171,7 @@ if __name__=='__main__':
     cost1 = cost.eval()
     #    cost1, _ = sess.run([cost, train_op])
     target_delta = -alpha*lr0*grad2_norm_op.eval()
+    expected_delta = -lr0*grad2_norm_op.eval()
     actual_delta = cost1 - cost0
     actual_slope = actual_delta/lr0
     expected_slope = -grad2_norm_op.eval()
@@ -183,7 +184,7 @@ if __name__=='__main__':
     ratios.append(slope_ratio)
 
     if i%10 == 0:
-      print("Cost %.2f, expected decrease %.2f, actual decrease, %.2f ratio %.2f"%(cost0, target_delta, actual_delta, slope_ratio))
+      print("Cost %.2f, expected decrease %.2f, actual decrease, %.2f ratio %.2f"%(cost0, expected_delta, actual_delta, slope_ratio))
 
     # don't shrink learning rate once results are very close to minimum
     if slope_ratio < alpha and abs(target_delta)>1e-6:
