@@ -1,6 +1,10 @@
 use_preconditioner = True
-drop_l2 = True
 adaptive_step = False
+drop_l2 = True
+drop_sparsity = True
+drop_reconstruction = False
+do_single_core = False
+use_gpu = False
 
 import sys
 #whitening_mode = int(sys.argv[1])
@@ -23,7 +27,10 @@ import math
 import time
 
 import os, sys
-os.environ['CUDA_VISIBLE_DEVICES']='0'
+if use_gpu:
+  os.environ['CUDA_VISIBLE_DEVICES']='0'
+else:
+  os.environ['CUDA_VISIBLE_DEVICES']=''
 
 import tensorflow as tf
 import util as u
@@ -40,7 +47,9 @@ from util import Kmat # commutation matrix
 def W_uniform(s1, s2):
   # sample two s1,s2 matrices 
   r = np.sqrt(6) / np.sqrt(s1 + s2 + 1)
-  return np.random.random(2*s2*s1)*2*r-r
+  result = np.random.random(2*s2*s1)*2*r-r
+  #  u.dump(result, "W2.csv")
+  return result
 
 
 if __name__=='__main__':
@@ -50,7 +59,7 @@ if __name__=='__main__':
   u.default_dtype = dtype
   
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
-  dsize = 10000
+  dsize = 5000
   patches = train_images[:,:dsize];
   fs = [dsize, 28*28, 196, 28*28]
 
@@ -117,11 +126,11 @@ if __name__=='__main__':
   B = [None]*(n+1)
   B2 = [None]*(n+1)
   B[n] = err*d_sigmoid(A[n+1])
-  B2[n] = tf.random_normal((f(n), f(-1)), dtype=dtype)*d_sigmoid(A[n+1])
+  B2[n] = tf.random_normal((f(n), f(-1)),dtype=dtype,seed=0)*d_sigmoid(A[n+1])
   for i in range(n-1, -1, -1):
     backprop = t(W[i+1]) @ B[i+1]
     backprop2 = t(W[i+1]) @ B2[i+1]
-    if i == 1:
+    if i == 1 and not drop_sparsity:
       backprop += beta*d_kl(rho, rho_hat)
       backprop2 += beta*d_kl(rho, rho_hat)
     B[i] = backprop*d_sigmoid(A[i+1])
@@ -151,10 +160,14 @@ if __name__=='__main__':
   reconstruction = u.L2(err) / (2 * dsize)
   sparsity = beta * tf.reduce_sum(kl(rho, rho_hat))
   L2 = (lambda_ / 2) * (u.L2(W[1]) + u.L2(W[1]))
-  if drop_l2:
-    cost = reconstruction + sparsity
-  else:
-    cost = reconstruction + sparsity + L2
+
+  cost = 0
+  if not drop_reconstruction:
+    cost = cost + reconstruction
+  if not drop_l2:
+    cost = cost + L2
+  if not drop_sparsity:
+    cost = cost + sparsity
 
   grad = u.flatten(dW[1:])    # true gradient
   grad2 = u.flatten(dW2[1:])  # preconditioned gradient
@@ -162,7 +175,10 @@ if __name__=='__main__':
   with tf.control_dependencies([copy_op]):
     train_op = tf.group(Wf.assign(Wf_copy)) # to make it an op
 
-  sess = tf.InteractiveSession()
+  if do_single_core:
+    sess = tf.InteractiveSession(config=tf.ConfigProto(inter_op_parallelism_threads=1,intra_op_parallelism_threads=1))
+  else:
+    sess = tf.InteractiveSession()
 
   #  step_len = init_var(tf.constant(0.1), "step_len", False)
   #  step_len_assign = step_len.assign(step_len0)
@@ -215,7 +231,7 @@ if __name__=='__main__':
     sess.run(whitenA[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
   #  sess.run(whitenB[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
   
-  for i in range(10):
+  for i in range(5):
     # save Wf and grad into Wf2 and grad_copy
     save_wf()
     save_grad()  # => grad_copy
@@ -290,5 +306,7 @@ if __name__=='__main__':
 
     u.record_time()
 
-    #  u.dump(costs, "new%d.csv"%(whitening_mode,))
+    #  u.dump(costs, "mac1.csv")
+  targets = np.loadtxt("data/mac1.csv", delimiter=",")
+  u.check_equal(costs[:5], targets[:5])
   u.summarize_time()
