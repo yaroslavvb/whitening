@@ -307,6 +307,11 @@ if __name__=='__main__':
     u.record_time()
 
     #  u.dump(costs, "mac1.csv")
-  targets = np.loadtxt("data/mac1.csv", delimiter=",")
+  if 'Apple' in sys.version:
+    targets = np.loadtxt("data/mac1.csv", delimiter=",")
+  else:
+    #    u.dump(costs, "linux1.csv")
+    targets = np.loadtxt("data/linux1.csv", delimiter=",")
+    
   u.check_equal(costs[:5], targets[:5])
   u.summarize_time()
