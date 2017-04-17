@@ -1,4 +1,9 @@
 use_preconditioner = True
+drop_l2 = True
+adaptive_step = False
+
+import sys
+whitening_mode = int(sys.argv[1])
 
 """Do line searches, dump csvs"""
 
@@ -144,7 +149,10 @@ if __name__=='__main__':
   reconstruction = u.L2(err) / (2 * dsize)
   sparsity = beta * tf.reduce_sum(kl(rho, rho_hat))
   L2 = (lambda_ / 2) * (u.L2(W[1]) + u.L2(W[1]))
-  cost = reconstruction + sparsity + L2
+  if drop_l2:
+    cost = reconstruction + sparsity
+  else:
+    cost = reconstruction + sparsity + L2
 
   grad = u.flatten(dW[1:])    # true gradient
   grad2 = u.flatten(dW2[1:])  # preconditioned gradient
@@ -201,10 +209,11 @@ if __name__=='__main__':
   beta=0.8    # how much to shrink when violation
   growth_rate = 1.05  # how much to grow when too conservative
 
-  sess.run(whitenA[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
+  if whitening_mode>0:
+    sess.run(whitenA[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
   #  sess.run(whitenB[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
   
-  for i in range(1000):
+  for i in range(10000):
     # save Wf and grad into Wf2 and grad_copy
     save_wf()
     save_grad()  # => grad_copy
@@ -231,25 +240,30 @@ if __name__=='__main__':
     ratios.append(slope_ratio)
 
     if i%10==0:
+      pass
       # each is about 200 ms
-      sess.run(whitenA[2].assign(u.pseudo_inverse_sqrt(Acov[2],eps=1e-20)))
-      sess.run(whitenB[2].assign(u.pseudo_inverse_sqrt(Bcov2[2],eps=1e-20)))
+      if whitening_mode>1:
+        sess.run(whitenA[2].assign(u.pseudo_inverse_sqrt(Acov[2],eps=1e-20)))
+      if whitening_mode>2:
+        sess.run(whitenB[2].assign(u.pseudo_inverse_sqrt(Bcov2[2],eps=1e-20)))
+      if whitening_mode>3:
       # Get NaN's if I whiten B[1] as well
-      #      sess.run(whitenB[1].assign(u.pseudo_inverse_sqrt(Bcov2[1],eps=1e-20)))
+        sess.run(whitenB[1].assign(u.pseudo_inverse_sqrt(Bcov2[1],eps=1e-20)))
 
     if i%10 == 0:
-      print("Cost %.2f, expected decrease %.3f, actual decrease, %.3f ratio %.2f"%(cost0, expected_delta, actual_delta, slope_ratio))
+      print("Step %d cost %.2f, expected decrease %.3f, actual decrease, %.3f ratio %.2f"%(i, cost0, expected_delta, actual_delta, slope_ratio))
+      #      print("Cost %.2f, expected decrease %.3f, actual decrease, %.3f ratio %.2f"%(cost0, expected_delta, actual_delta, slope_ratio))
 #      for layer_num in range(1, n+1):
 #        u.dump(Acov[layer_num], "Acov-%d-%d.csv"%(layer_num, i,))
 #        u.dump(Bcov[layer_num], "Bcov-%d-%d.csv"%(layer_num, i,))
       
-    if len(costs)>6 and costs[-5]-costs[-1] < 0.0001:
-      print("Converged in %d to %.2f "%(i, cost0))
-      break
+    # if len(costs)>6 and costs[-5]-costs[-1] < 0.0001:
+    #   print("Converged in %d to %.2f "%(i, cost0))
+    #   break
 
     
     # don't shrink learning rate once results are very close to minimum
-    if slope_ratio < alpha and abs(target_delta)>1e-6:
+    if slope_ratio < alpha and abs(target_delta)>1e-6 and adaptive_step:
       print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
       print("Slope optimality %.2f, shrinking learning rate to %.2f"%(slope_ratio, lr0*beta,))
       sess.run(lr_set, feed_dict={lr_p: lr0*beta})
@@ -257,7 +271,7 @@ if __name__=='__main__':
       # see if our learning rate got too conservative, and increase it
       # 99 was ideal for gradient
 #      if i>0 and i%50 == 0 and slope_ratio>0.99:
-      if i>0 and i%50 == 0 and slope_ratio>0.90:
+      if i>0 and i%50 == 0 and slope_ratio>0.90 and adaptive_step:
         print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
         print("Growing learning rate to %.2f"%(lr0*growth_rate))
         sess.run(lr_set, feed_dict={lr_p: lr0*growth_rate})
@@ -273,5 +287,5 @@ if __name__=='__main__':
 
     u.record_time()
 
-  u.dump(costs, "costs4.csv")
+  u.dump(costs, "new%d.csv"%(whitening_mode,))
   u.summarize_time()
