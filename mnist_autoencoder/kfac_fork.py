@@ -159,8 +159,8 @@ if __name__=='__main__':
   B = [None]*(n+1)
   B2 = [None]*(n+1)
   B[n] = err*d_sigmoid(A[n+1])
-#  sampled_labels = tf.Variable(tf.random_normal((f(n), f(-1)),dtype=dtype,seed=0))
-  sampled_labels = tf.random_normal((f(n), f(-1)),dtype=dtype,seed=0)
+  sampled_labels = tf.Variable(tf.random_normal((f(n), f(-1)),dtype=dtype,seed=0))
+  #  sampled_labels = tf.random_normal((f(n), f(-1)),dtype=dtype,seed=0)
   B2[n] = sampled_labels*d_sigmoid(A[n+1])
   for i in range(n-1, -1, -1):
     backprop = t(W[i+1]) @ B[i+1]
@@ -363,7 +363,7 @@ if __name__=='__main__':
     save_grad2()  # => grad_copy
     #    sess.run(xyz_update_grad_op)
     #    sess.run(xyz_update_pregrad_op)
-    #    sess.run(sampled_labels.initializer)  # new labels for next call
+    sess.run(sampled_labels.initializer)  # new labels for next call
     
     lr0 = lr.eval()
     cost0 = cost.eval()
@@ -449,12 +449,12 @@ if __name__=='__main__':
 
     u.record_time()
 
-    #  u.dump(costs, "mac1.csv")
   if 'Apple' in sys.version:
-    targets = np.loadtxt("data/mac1.csv", delimiter=",")
+    u.dump(costs, "mac2.csv")
+    targets = np.loadtxt("data/mac2.csv", delimiter=",")
   else:
-    #    u.dump(costs, "linux1.csv")
-    targets = np.loadtxt("data/linux1.csv", delimiter=",")
+    u.dump(costs, "linux2.csv")
+    targets = np.loadtxt("data/linux2.csv", delimiter=",")
     
   u.check_equal(costs[:5], targets[:5])
   u.summarize_time()
