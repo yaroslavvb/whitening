@@ -220,6 +220,7 @@ if __name__=='__main__':
     if use_preconditioner:
       dW2[i] = (whitenB[i] @ B[i]) @ t(whitenA[i] @ A[i])/dsize
       xyz_dW2[i] = (xyz_whiten_B2[i] @ B[i]) @ t(xyz_whiten_A[i] @ A[i])/dsize
+#      xyz_dW2[i] = (whitenB[i] @ B[i]) @ t(whitenA[i] @ A[i])/dsize
     else:
       dW2[i] = (B[i]) @ t(A[i])/dsize
     A_len = int(Acov[i].shape[0])
@@ -252,16 +253,18 @@ if __name__=='__main__':
   xyz_grad_live = u.flatten(dW[1:])
   xyz_pregrad_live = u.flatten(xyz_dW2[1:]) # preconditioned gradient
   
+  xyz_grad = tf.Variable(grad)#xyz_grad_live)
+  xyz_pregrad = tf.Variable(grad)#xyz_pregrad_live)
+  xyz_update_params_op = Wf.assign(Wf-lr*xyz_pregrad)
+  xyz_update_grad_op = xyz_grad.assign(xyz_grad_live)
+  xyz_update_pregrad_op = xyz_pregrad.assign(xyz_pregrad_live)
+
   grad2 = u.flatten(dW2[1:])  # preconditioned gradient
   copy_op = Wf_copy.assign(Wf-lr*grad2)
+  copy_op = Wf_copy.assign(Wf-lr*xyz_pregrad)
   with tf.control_dependencies([copy_op]):
     train_op = tf.group(Wf.assign(Wf_copy)) # to make it an op
 
-  xyz_grad = tf.Variable(grad)#xyz_grad_live)
-  xyz_pregrad = tf.Variable(grad)#xyz_pregrad_live)
-  xyz_update_params_op = Wf.assign(Wf-lr*xyz_grad)
-  xyz_update_grad_op = xyz_grad.assign(xyz_grad_live)
-  xyz_update_pregrad_op = xyz_pregrad.assign(xyz_pregrad_live)
   
   if do_single_core:
     sess = tf.InteractiveSession(config=tf.ConfigProto(inter_op_parallelism_threads=1,intra_op_parallelism_threads=1))
@@ -344,7 +347,8 @@ if __name__=='__main__':
 
   if whitening_mode>0:
     sess.run(whitenA[1].assign(u.pseudo_inverse_sqrt(Acov[1],eps=1e-20)))
-    #    xyz_update_whiten_A(1)
+    xyz_update_cov_A(1)
+    xyz_update_whiten_A(1)
     #    update_svd_a(1)
 
 #  # construct preconditioned gradient
@@ -361,25 +365,31 @@ if __name__=='__main__':
     save_wf()
     save_grad()  # => grad_copy
     save_grad2()  # => grad_copy
-    #    sess.run(xyz_update_grad_op)
-    #    sess.run(xyz_update_pregrad_op)
-    sess.run(sampled_labels.initializer)  # new labels for next call
+    sess.run(xyz_update_grad_op)
+    sess.run(xyz_update_pregrad_op)
+
+    for layer_num in range(1, n+1):
+      xyz_update_cov_A(layer_num)
+      xyz_update_cov_B2(layer_num)
     
+
     lr0 = lr.eval()
     cost0 = cost.eval()
     train_op.run()
+    #sess.run(xyz_update_params_op)
     
     # update params based on preconditioned gradient
-    #    sess.run(xyz_update_params_op)
     cost1 = cost.eval()
 
+    sess.run(sampled_labels.initializer)  # new labels for next call
+    
     #    cost1, _ = sess.run([cost, train_op])
     #    target_delta = -alpha*lr0*grad_copy_norm_op.eval()
     # todo: get rid of expected delta
     target_delta = -alpha*lr0*grad2_dot_grad_op.eval()
-#    xyz_target_delta = -alpha*lr0*xyz_pregrad_dot_grad_op.eval()
+    xyz_target_delta = -alpha*lr0*xyz_pregrad_dot_grad_op.eval()
     expected_delta = -lr0*grad2_dot_grad_op.eval()
-#    xyz_expected_delta =-lr0*xyz_pregrad_dot_grad_op.eval()
+    xyz_expected_delta =-lr0*xyz_pregrad_dot_grad_op.eval()
 
     actual_delta = cost1 - cost0
     actual_slope = actual_delta/lr0
@@ -399,16 +409,16 @@ if __name__=='__main__':
       # each is about 200 ms
       if whitening_mode>1:
         sess.run(whitenA[2].assign(u.pseudo_inverse_sqrt(Acov[2],eps=1e-20)))
-        #xyz_update_whiten_A(2)
+        xyz_update_whiten_A(2)
         #        update_svd_a(2)
       if whitening_mode>2:
         sess.run(whitenB[2].assign(u.pseudo_inverse_sqrt(Bcov2[2],eps=1e-20)))
-        #xyz_update_whiten_B2(2)
+        xyz_update_whiten_B2(2)
         #        update_svd_b(2)
       if whitening_mode>3:
       # Get NaN's if I whiten B[1] as well
         sess.run(whitenB[1].assign(u.pseudo_inverse_sqrt(Bcov2[1],eps=1e-20)))
-        #xyz_update_whiten_B2(1)
+        #        xyz_update_whiten_B2(1)
         #        update_svd_b(1)
 
     print("Step %d cost %.2f, expected decrease %.3f, actual decrease, %.3f ratio %.2f"%(i, cost0, expected_delta, actual_delta, slope_ratio))
@@ -450,11 +460,11 @@ if __name__=='__main__':
     u.record_time()
 
   if 'Apple' in sys.version:
-    u.dump(costs, "mac2.csv")
-    targets = np.loadtxt("data/mac2.csv", delimiter=",")
+    u.dump(costs, "mac3.csv")
+    targets = np.loadtxt("data/mac3.csv", delimiter=",")
   else:
-    u.dump(costs, "linux2.csv")
-    targets = np.loadtxt("data/linux2.csv", delimiter=",")
+    u.dump(costs, "linux3.csv")
+    targets = np.loadtxt("data/linux3.csv", delimiter=",")
     
   u.check_equal(costs[:5], targets[:5])
   u.summarize_time()
