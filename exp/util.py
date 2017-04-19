@@ -1,4 +1,5 @@
 import tensorflow as tf
+import networkx as nx
 
 # TODO: replace "shape" with "get_shape" for numpy compat
 default_dtype = tf.float64
@@ -83,9 +84,30 @@ def pseudo_inverse_sqrt(mat, eps=1e-10):
   si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
-def Identity(n, dtype=default_dtype):
+def pseudo_inverse_sqrt2(svd, eps=1e-10):
+  """half pseduo-inverse, accepting existing values"""
+  # zero threshold for eigenvalues
+  if svd.__class__.__name__=='SvdTuple':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  elif svd.__class__.__name__=='MySvd':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
+  return u @ tf.diag(si) @ tf.transpose(v)
+
+def Identity(n, dtype=None, name=None):
   """Identity matrix of size n."""
-  return tf.diag(tf.ones((n,), dtype=dtype))
+  if hasattr(n, "shape"):  # got a Tensor
+    nn = fix_shape(n.shape)
+    assert nn[0] == nn[1]
+    n = nn[0]
+  if not dtype:
+    dtype = default_dtype
+  return tf.diag(tf.ones((n,), dtype=dtype), name=name)
+
+def ones(n, dtype=None, name=None):
+  if not dtype:
+    dtype = default_dtype
+  return tf.ones((n,), dtype=dtype, name=name)
 
 # partitions numpy array into sublists of given sizes
 def partition_list_np(vec, sizes):
@@ -156,9 +178,10 @@ def unvec(vec, rows):
   number of rows."""
   assert len(vec.shape) == 1
   assert vec.shape[0]%rows == 0
-  cols = int(vec.shape[0]//rows) 
-  cols = [v2r(v) for v in tf.split(vec, cols)]
-  return tf.transpose(tf.concat(cols, 0))
+  cols = int(vec.shape[0]//rows)
+  return tf.transpose(tf.reshape(vec, (cols, -1)))
+#  cols = [v2r(v) for v in tf.split(vec, cols)]
+#  return tf.transpose(tf.concat(cols, 0))
 
 def unvec_test():
   vec = tf.constant([1,2,3,4,5,6])
@@ -501,17 +524,68 @@ def run_all_tests(module):
 def dump(result, fname):
   """Save result to file."""
   result = result.eval() if hasattr(result, "eval") else result
+  result = np.asarray(result)
+  if result.shape == ():   # savetxt has problems with scalars
+    result = np.expand_dims(result, 0)
   location = os.getcwd()+"/data/"+fname
-  np.savetxt(location, result, delimiter=',')
+  # special handling for integer datatypes
+  if (
+      result.dtype == np.uint8 or result.dtype == np.int8 or
+      result.dtype == np.uint16 or result.dtype == np.int16 or
+      result.dtype == np.uint32 or result.dtype == np.int32 or
+      result.dtype == np.uint64 or result.dtype == np.int64
+  ):
+    np.savetxt(location, result, fmt="%d", delimiter=',')
+  else:
+    np.savetxt(location, result, delimiter=',')
   print(location)
 
 
 def frobenius_np(a):
   return np.sqrt(np.sum(np.square(a)))
 
+def nan_check(result):
+  result = result.eval() if hasattr(result, "eval") else result
+  result = np.asarray(result)
+  print("result any NaNs: %s"% (np.isnan(result).any(),))
+
+
 def L2(t):
   """Squared L2 norm of t."""
   return tf.reduce_sum(tf.square(t))
-  
+
+class timeit:    
+  def __enter__(self):
+    self.start = time.clock()
+    return self
+
+  def __exit__(self, *args):
+    self.end = time.clock()
+    self.interval = self.end - self.start
+    print("Elapsed: %.2f ms"%(self.interval*1000))
+
+
+# graph traversal
+# computation flows from parents to children
+# to find path from target to dependency, do
+# nx.shortest_path(gg, dependency, target)
+def parents(op): return set(input.op for input in op.inputs)
+def children(op): return set(op for out in op.outputs for op in out.consumers())
+def dict_graph():
+  """Creates dictionary {node: {child1, child2, ..},..} for current
+  TensorFlow graph. Result is compatible with networkx/toposort"""
+
+  ops = tf.get_default_graph().get_operations()
+  return {op: children(op) for op in ops}
+def nx_graph():
+  return nx.DiGraph(dict_graph())
+
+def shortest_path(dep, target):
+  if hasattr(dep, "op"):
+    dep = dep.op
+  if hasattr(target, "op"):
+    target = target.op
+  return nx.shortest_path(nx_graph(), dep, target)
+
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
