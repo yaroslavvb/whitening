@@ -227,8 +227,9 @@ if __name__=='__main__':
                  tf.Variable(init_svd_B2, dtype=dtype)]
     dW[i] = (B[i]) @ t(A[i])/dsize
     # TODO: rename dW2 to predW
-#    xyz_dW2[i] = (xyz_whiten_B2[i] @ B[i]) @ t(xyz_whiten_A[i] @ A[i])/dsize
-    xyz_dW2[i] = (u.pseudo_inverse_sqrt2(vars_svd_B2[i]) @ B[i]) @ t(xyz_whiten_A[i] @ A[i])/dsize
+    whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i]) @ B[i]
+    whitened_A = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
+    xyz_dW2[i] = (whitened_B2 @ t(whitened_A))/dsize
 
   # Cost function
   reconstruction = u.L2(err) / (2 * dsize)
@@ -277,6 +278,14 @@ if __name__=='__main__':
     ops_A = [xyz_cov_A[i].initializer for i in range(1, n+1)]
     ops_B2 = [xyz_cov_B2[i].initializer for i in range(1, n+1)]
     sess.run(ops_A+ops_B2)
+
+  def update_svds():
+    if whitening_mode>1:
+      xyz_update_whiten_A(2)
+    if whitening_mode>2:
+      xyz_update_whiten_B2(2)
+    if whitening_mode>3:
+      xyz_update_whiten_B2(1)
 
 
   # TODO: add names to ops (?) and vars (!)
@@ -339,6 +348,7 @@ if __name__=='__main__':
     sess.run(xyz_pregrad.initializer)
     
 
+  # only update whitening matrix of input activations in the beginning
   if whitening_mode>0:
     xyz_update_whiten_A(1)
     
@@ -357,8 +367,11 @@ if __name__=='__main__':
   for i in range(5):
     sess.run(xyz_update_grad_op)
     sess.run(xyz_update_pregrad_op)
-
     update_covariances()
+    
+    # TODO: fix B2 labels in variable to avoid recomputing all backprops
+    if i%whiten_every_n_steps==0:
+      update_svds()
     
     lr0, cost0 = sess.run([lr, cost])
     save_params_op.run()
@@ -388,15 +401,6 @@ if __name__=='__main__':
     step_lengths.append(lr0)
     ratios.append(slope_ratio)
 
-    # TODO: fix B2 labels in variable to avoid recomputing all backprops
-    if i%whiten_every_n_steps==0:
-      # each is about 200 ms
-      if whitening_mode>1:
-        xyz_update_whiten_A(2)
-      if whitening_mode>2:
-        xyz_update_whiten_B2(2)
-      if whitening_mode>3:
-        xyz_update_whiten_B2(1)
 
     print("Step %d cost %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f"%(i, cost0, xyz_target_delta, actual_delta, slope_ratio))
     
@@ -428,11 +432,11 @@ if __name__=='__main__':
 
   # check against expected loss
   if 'Apple' in sys.version:
-    #    u.dump(costs, "mac4.csv")
-    targets = np.loadtxt("data/mac4.csv", delimiter=",")
+    u.dump(costs, "mac5.csv")
+    targets = np.loadtxt("data/mac5.csv", delimiter=",")
   else:
-    #    u.dump(costs, "linux4.csv")
-    targets = np.loadtxt("data/linux4.csv", delimiter=",")
+    u.dump(costs, "linux5.csv")
+    targets = np.loadtxt("data/linux5.csv", delimiter=",")
     
   u.check_equal(costs[:5], targets[:5])
   u.summarize_time()
