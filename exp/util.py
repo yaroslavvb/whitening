@@ -1,7 +1,6 @@
 import tensorflow as tf
 import networkx as nx
 
-# TODO: replace "shape" with "get_shape" for numpy compat
 default_dtype = tf.float64
 
 import numpy as np
@@ -89,8 +88,10 @@ def pseudo_inverse_sqrt2(svd, eps=1e-10):
   # zero threshold for eigenvalues
   if svd.__class__.__name__=='SvdTuple':
     (s, u, v) = (svd.s, svd.u, svd.v)
-  elif svd.__class__.__name__=='MySvd':
+  elif svd.__class__.__name__=='SvdWrapper':
     (s, u, v) = (svd.s, svd.u, svd.v)
+  else:
+    assert False, "Unknown type"
   si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
@@ -586,6 +587,13 @@ def shortest_path(dep, target):
   if hasattr(target, "op"):
     target = target.op
   return nx.shortest_path(nx_graph(), dep, target)
+
+def list_or_tuple(k):
+  return isinstance(k, list) or isinstance(k, tuple)
+
+def is_numeric(ndarray):
+  ndarray = np.asarray(ndarray)
+  return np.issubdtype(ndarray.dtype, np.number)
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])

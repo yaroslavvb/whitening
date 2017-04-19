@@ -1,7 +1,7 @@
 # conventions. "_op things are ops"
 # "x0" means numpy
-# all variable names end with "_var" in graph
 # _live means it's used to update a variable value
+# var, var_set, var_p give variable, assign op, placeholder op
 
 # todo: replace all parts of whitening with svd
 # run for longer
@@ -11,7 +11,6 @@ use_preconditioner = True
 adaptive_step = False
 drop_l2 = True
 drop_sparsity = True
-drop_reconstruction = False
 use_gpu = False
 do_line_search = False
 intersept_op_creation = False
@@ -20,16 +19,12 @@ import sys
 #whitening_mode = int(sys.argv[1])
 whitening_mode=3
 whiten_every_n_steps = 1
-
 natural_samples = 1
+line_search_frequency = 2
 
 import networkx as nx
 import load_MNIST
-import scipy.optimize
-import softmax
 import numpy as np
-import display_network
-from IPython.display import Image
 import scipy.io # for loadmat
 import matplotlib # for matplotlib.cm.gray
 from matplotlib.pyplot import imshow
@@ -43,9 +38,8 @@ else:
   os.environ['CUDA_VISIBLE_DEVICES']=''
 
 import tensorflow as tf
+import util
 import util as u
-from util import t  # transpose
-
 from util import t  # transpose
 from util import c2v
 from util import v2c
@@ -65,57 +59,80 @@ if intersept_op_creation:
     return(old_apply_op(obj, op_type_name, name=name, **keywords))
   op_def_library.OpDefLibrary.apply_op=my_apply_op
 
+class VarInfo:
+  def __init__(self, setter, p):
+    self.setter = setter
+    self.p = p
 
 class SvdTuple:
-  def __init__(self, suv):
-    s, u, v = suv
+  """Object to store svd tuple.
+  Create as SvdTuple((s,u,v)) or SvdTuple(s, u, v).
+  """
+  def __init__(self, suv, *args):
+    if util.list_or_tuple(suv):
+      s, u, v = suv
+    else:
+      s = suv
+      u = args[0]
+      v = args[1]
+      assert len(args) == 2
     self.s = s
     self.u = u
     self.v = v
-    
-class MySvd:
-  """Encapsulates variables needed for an SVD."""
-  def __init__(self, name, target):
+
+
+class SvdWrapper:
+  """Encapsulates variables needed to perform SVD of a TensorFlow target.
+  Initialize: wrapper = SvdWrapper(tensorflow_var)
+  Trigger SVD: wrapper.update_tf() or wrapper.update_scipy()
+  Access result as TF vars: wrapper.s, wrapper.u, wrapper.v
+  """
+  
+  def __init__(self, target, name):
     self.name = name
     self.target = target
     self.tf_svd = SvdTuple(tf.svd(target))
 
-    self.init = SvdTuple((
+    self.init = SvdTuple(
       u.ones(target.shape[0], name=name+"_s_init"),
       u.Identity(target.shape[0], name=name+"_u_init"),
       u.Identity(target.shape[0], name=name+"_v_init")
-    ))
+    )
 
     assert self.tf_svd.s.shape == self.init.s.shape
     assert self.tf_svd.u.shape == self.init.u.shape
     assert self.tf_svd.v.shape == self.init.v.shape
 
-    self.cached = SvdTuple((
+    self.cached = SvdTuple(
       tf.Variable(self.init.s, name=name+"_s"),
       tf.Variable(self.init.u, name=name+"_u"),
       tf.Variable(self.init.v, name=name+"_v")
-    ))
+    )
 
     self.s = self.cached.s
     self.u = self.cached.u
     self.v = self.cached.v
     
-    self.holder = SvdTuple((
+    self.holder = SvdTuple(
       tf.placeholder(dtype, shape=self.cached.s.shape, name=name+"_s_holder"),
       tf.placeholder(dtype, shape=self.cached.u.shape, name=name+"_u_holder"),
       tf.placeholder(dtype, shape=self.cached.v.shape, name=name+"_v_holder")
-    ))
+    )
 
     self.update_tf_op = tf.group(
       self.cached.s.assign(self.tf_svd.s),
       self.cached.u.assign(self.tf_svd.u),
       self.cached.v.assign(self.tf_svd.v)
     )
-    
+
+    self.init_ops = (self.s.initializer, self.u.initializer, self.v.initializer)
+  
   def update_tf(self):
+    sess = tf.get_default_session()
     sess.run(self.update_tf_op)
     
   def update_scipy(self):
+    sess = tf.get_default_session()
     assert False
     sess.run(self.update_tf_op)
 
@@ -147,27 +164,27 @@ if __name__=='__main__':
   dsize = f(-1)
   n = len(fs) - 2
 
-  init_dict = {}
+  init_dict = {}     # {var_placeholder: init_value}
+  var_dict = {}      # {var: VarInfo}
   def init_var(val, name, trainable=False, noinit=False):
     if isinstance(val, tf.Tensor):
       collections = [] if noinit else None
       var = tf.Variable(val, name=name, collections=collections)
     else:
       val = np.array(val)
-      assert np.issubdtype(val.dtype, np.number), "Unknown type"
+      assert u.is_numeric, "Unknown type"
       holder = tf.placeholder(dtype, shape=val.shape, name=name+"_holder")
       var = tf.Variable(holder, name=name, trainable=trainable)
       init_dict[holder] = val
-      
+    var_p = tf.placeholder(var.dtype, var.shape)
+    var_setter = var.assign(var_p)
+    var_dict[var] = VarInfo(var_setter, var_p)
     return var
 
   lr = init_var(0.2, "lr")
-  lr_p = tf.placeholder(lr.dtype, lr.shape, "lr_p")
-  lr_set = lr.assign(lr_p)
-  
   Wf = init_var(W0f, "Wf", True)
   Wf_copy = init_var(W0f, "Wf_copy", True)
-  W = u.unflatten(Wf, fs[1:])
+  W = u.unflatten(Wf, fs[1:])   # todo: get rid of this because transposes
   X = init_var(X0, "X")
   W.insert(0, X)
 
@@ -196,7 +213,7 @@ if __name__=='__main__':
   rho_hat = tf.reduce_sum(A[2], axis=1, keep_dims=True)/dsize
 
   # B[i] = backprops needed to compute gradient of W[i]
-  # B2[i] = synthetic backprops for natural gradient
+  # B2[i] = backprops from sampled labels needed for natural gradient
   B = [None]*(n+1)
   B2 = [None]*(n+1)
   B[n] = err*d_sigmoid(A[n+1])
@@ -215,8 +232,6 @@ if __name__=='__main__':
   # dW[i] = gradient of W[i]
   dW = [None]*(n+1)
   pre_dW = [None]*(n+1)  # preconditioned dW
-  whitenA = [None]*(n+1)
-  whitenB = [None]*(n+1)
 
   # TODO: add tiling for natural sampling
   cov_A = [None]*(n+1)
@@ -226,8 +241,8 @@ if __name__=='__main__':
   for i in range(1,n+1):
     cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
     cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
-    vars_svd_A[i] = MySvd("svd_A_%d"%(i,), cov_A[i])
-    vars_svd_B2[i] = MySvd("svd_B2_%d"%(i,), cov_B2[i])
+    vars_svd_A[i] = SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
+    vars_svd_B2[i] = SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     whitened_A = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
     whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i]) @ B[i]
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
@@ -238,9 +253,7 @@ if __name__=='__main__':
   sparsity = beta * tf.reduce_sum(kl(rho, rho_hat))
   L2 = (lambda_ / 2) * (u.L2(W[1]) + u.L2(W[1]))
 
-  cost = 0
-  if not drop_reconstruction:
-    cost = cost + reconstruction
+  cost = reconstruction
   if not drop_l2:
     cost = cost + L2
   if not drop_sparsity:
@@ -248,8 +261,9 @@ if __name__=='__main__':
 
   grad_live = u.flatten(dW[1:])
   pre_grad_live = u.flatten(pre_dW[1:]) # preconditioned gradient
-  grad = tf.Variable(grad_live, collections=[])
-  pre_grad = tf.Variable(pre_grad_live, collections=[]) 
+  grad = init_var(grad_live, "grad")
+  pre_grad = init_var(pre_grad_live, "pre_grad")
+
   update_params_op = Wf.assign(Wf-lr*pre_grad).op
   save_params_op = Wf_copy.assign(Wf).op
   pre_grad_dot_grad = tf.reduce_sum(pre_grad*grad)
@@ -270,14 +284,24 @@ if __name__=='__main__':
     if whitening_mode>3:
       vars_svd_B2[1].update_tf()
 
+  def init_svds():
+    ops = []
+    for i in range(1, n+1):
+      ops.extend(vars_svd_A[i].init_ops)
+      ops.extend(vars_svd_B2[i].init_ops)
+    sess = tf.get_default_session()
+    sess.run(ops)
+      
   init_op = tf.global_variables_initializer()
   tf.get_default_graph().finalize()
+  
   sess = tf.InteractiveSession()
   sess.run(Wf.initializer, feed_dict=init_dict)
   sess.run(X.initializer, feed_dict=init_dict)
   advance_batch()
   update_covariances()
-  sess.run(init_op, feed_dict=init_dict)
+  init_svds()
+  sess.run(init_op, feed_dict=init_dict)  # initialize everything else
   
   print("Running training.")
   u.reset_time()
@@ -289,7 +313,7 @@ if __name__=='__main__':
   # adaptive line search parameters
   alpha=0.3   # acceptable fraction of predicted decrease
   beta=0.8    # how much to shrink when violation
-  growth_rate = 1.05  # how much to grow when too conservative
+  growth_rate=1.05  # how much to grow when too conservative
     
   # todo: use machine precision for epsilon instead of 1e-20
   def update_cov_A(i):
@@ -326,18 +350,15 @@ if __name__=='__main__':
     update_params_op.run()
     cost1 = cost.eval()
 
-    # advance batch goes here
     advance_batch()
     
-    target_delta = -lr0*pre_grad_dot_grad.eval()
-
+    target_slope = -pre_grad_dot_grad.eval()
+    target_delta = lr0*target_slope
     actual_delta = cost1 - cost0
     actual_slope = actual_delta/lr0
-    expected_slope = -pre_grad_dot_grad.eval()
+    # occasionally see slope ratio 1.01, due to floating point?
+    slope_ratio = abs(actual_slope)/abs(target_slope) 
 
-    # ratio of best possible slope to actual slope
-    # don't divide by actual slope because that can be 0
-    slope_ratio = abs(actual_slope)/abs(expected_slope)
     if do_line_search:
       vals1 = line_search(Wf_copy, pre_grad, lr/100, 40)
       vals2 = line_search(Wf_copy, grad, lr/100, 40)
@@ -351,17 +372,18 @@ if __name__=='__main__':
     print("Step %d cost %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f"%(i, cost0, target_delta, actual_delta, slope_ratio))
     
     # don't shrink learning rate once results are very close to minimum
-    if slope_ratio < alpha and abs(target_delta)>1e-6 and adaptive_step:
-      print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
-      print("Slope optimality %.2f, shrinking learning rate to %.2f"%(slope_ratio, lr0*beta,))
-      sess.run(lr_set, feed_dict={lr_p: lr0*beta})
-    else:
-      # learning rate too conservative, increase
-      # .99 was ideal for gradient
-      if i>0 and i%50 == 0 and slope_ratio>0.90 and adaptive_step:
+    if i>0 and i % line_search_frequency == 0:
+      if slope_ratio < alpha and abs(target_delta)>1e-6 and adaptive_step:
         print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
-        print("Growing learning rate to %.2f"%(lr0*growth_rate))
-        sess.run(lr_set, feed_dict={lr_p: lr0*growth_rate})
+        print("Slope optimality %.2f, shrinking learning rate to %.2f"%(slope_ratio, lr0*beta,))
+        sess.run(lr_set, feed_dict={lr_p: lr0*beta})
+      else:   # grow learning rate
+        # .99 was ideal for gradient
+        if i>0 and i%50 == 0 and slope_ratio>0.90 and adaptive_step:
+          print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
+          print("Growing learning rate to %.2f"%(lr0*growth_rate))
+          sess.run(var_dict[lr].setter, feed_dict={var_dict[lr].p:
+                                                   lr0*growth_rate})
 
     u.record_time()
 
