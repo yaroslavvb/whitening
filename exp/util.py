@@ -13,6 +13,8 @@ import inspect
 
 from scipy import linalg
 
+# TODO: speed-up tests by reusing session
+
 def concat_blocks(blocks, validate_dims=True):
   """Takes 2d grid of blocks representing matrices and concatenates to single
   matrix (aka ArrayFlatten)"""
@@ -562,7 +564,9 @@ def run_all_tests(module):
   all_functions = inspect.getmembers(module, inspect.isfunction)
   for name,func in all_functions:
     if name.endswith("_test"):
-      func()
+      print("Testing "+name)
+      with timeit():
+        func()
   print(module.__name__+" tests passed.")
 
 def dump(result, fname):
