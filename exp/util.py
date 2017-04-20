@@ -68,7 +68,7 @@ def pseudo_inverse(mat, eps=1e-10):
   si = tf.where(tf.less(s, eps), s, 1./s)
   return u @ tf.diag(si) @ tf.transpose(v)
 
-def symsqrt(mat, eps=1e-10):
+def symsqrt(mat, eps=1e-7):
   """Symmetric square root."""
   s, u, v = tf.svd(mat)
   # sqrt is unstable around 0, just use 0 in such case
@@ -76,14 +76,14 @@ def symsqrt(mat, eps=1e-10):
   si = tf.where(tf.less(s, eps), s, tf.sqrt(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
-def pseudo_inverse_sqrt(mat, eps=1e-10):
+def pseudo_inverse_sqrt(mat, eps=1e-7):
   """half pseduo-inverse"""
   s, u, v = tf.svd(mat)
   # zero threshold for eigenvalues
   si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
-def pseudo_inverse_sqrt2(svd, eps=1e-10):
+def pseudo_inverse_sqrt2(svd, eps=1e-7):
   """half pseduo-inverse, accepting existing values"""
   # zero threshold for eigenvalues
   if svd.__class__.__name__=='SvdTuple':
@@ -93,6 +93,19 @@ def pseudo_inverse_sqrt2(svd, eps=1e-10):
   else:
     assert False, "Unknown type"
   si = tf.where(tf.less(s, eps), s, 1./tf.sqrt(s))
+  return u @ tf.diag(si) @ tf.transpose(v)
+
+def pseudo_inverse2(svd, eps=1e-7):
+  """pseudo-inverse, accepting existing values"""
+  # use float32 machine precision as cut-off (works for MKL)
+  # https://www.wolframcloud.com/objects/927b2aa5-de9c-46f5-89fe-c4a58aa4c04b
+  if svd.__class__.__name__=='SvdTuple':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  elif svd.__class__.__name__=='SvdWrapper':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  else:
+    assert False, "Unknown type"
+  si = tf.where(tf.less(s, eps), s, 1./s)
   return u @ tf.diag(si) @ tf.transpose(v)
 
 def Identity(n, dtype=None, name=None):
