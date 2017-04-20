@@ -16,12 +16,27 @@ prefix="instability4"  # try with double precision
 prefix="instability5"  # move covariance/svd calculation to top
 prefix="fixed1"  # running longer after all the fixes
 prefix="fixed2"  # change to whiten at every step
+prefix="fixed3"  # go back to 15 steps
+prefix="instability6"  # figure out why 3 diverges on step 15
+# step 15: 0.0220476798713207245, step 16: 0.0239447262138128281
+# Step 16 loss 0.74, target decrease -1.024, actual decrease, -0.046 ratio 0.05
+# Step 17 loss 0.69, target decrease -1.102, actual decrease, 0.155 ratio -0.14
+prefix="instability7"  # changing eps to machine precision
+prefix="instability8"  # changing to use numpy pseudo-inverse
+prefix="instability9"  # higher epsilon
+prefix="instability10" # looking at line search at bad slope
+prefix="instability11" # use sqrt of fisher instead of regular fisher
+prefix="instability12" # use -0.99 instead of -1
+prefix="comparison1" # compare full vs sqrt fisher
+prefix="comparison2" # compare sqrt
 
 # whitening_mode=3 explodes on step 7
 # TODO: try propagating identity vectors instead of gaussian
 
+import util
+import util as u
+
 use_preconditioner = True
-adaptive_step = False
 drop_l2 = True
 drop_sparsity = True
 use_gpu = True
@@ -33,11 +48,14 @@ whitening_mode = int(sys.argv[1])
 #whitening_mode=0
 whiten_every_n_steps = 1
 natural_samples = 1
+adaptive_step = False
 adaptive_step_frequency = 10
 adaptive_step_burn_in = 100 # let optimization go for a bit first
 report_frequency = 10
 
 USE_MKL_SVD=True
+inverse_impl = u.pseudo_inverse_sqrt2 # u.pseudo_inverse_sqrt2
+
 
 import networkx as nx
 import load_MNIST
@@ -56,8 +74,6 @@ else:
   os.environ['CUDA_VISIBLE_DEVICES']=''
 
 import tensorflow as tf
-import util
-import util as u
 from util import t  # transpose
 from util import c2v
 from util import v2c
@@ -280,18 +296,20 @@ if __name__=='__main__':
   cov_B2 = [None]*(n+1)
   vars_svd_A = [None]*(n+1)
   vars_svd_B2 = [None]*(n+1)
+  # eps=1e-5 gives same behavior on mnist (converge in 17 steps)
+  eps_to_use = 1e-7
   for i in range(1,n+1):
     cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
     cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
     vars_svd_A[i] = SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
-    #    whitened_A = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
-    whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
+    whitened_A = inverse_impl(vars_svd_A[i])@A[i]
+    #whitened_A = u.pseudo_inverse_sqrt2(vars_svd_A[i],eps=eps_to_use) @ A[i]
+    #whitened_A = u.pseudo_inverse_scipy(cov_A[i]) @ A[i]
     # raise epsilon because b's get weird
-    #    whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i]) @ B[i]
-    whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
-    if i==1:  # special handling for B2
-      whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i],eps=1e-3) @ B[i]
+    #whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i], eps=eps_to_use) @ B[i]
+    #    whitened_B2 = u.pseudo_inverse_scipy(cov_B2[i]) @ B[i]
+    whitened_B2 = inverse_impl(vars_svd_B2[i])@B[i]
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
     dW[i] = (B[i] @ t(A[i]))/dsize
 
@@ -314,6 +332,8 @@ if __name__=='__main__':
   update_params_op = Wf.assign(Wf-lr*pre_grad).op
   save_params_op = Wf_copy.assign(Wf).op
   pre_grad_dot_grad = tf.reduce_sum(pre_grad*grad)
+  grad_norm = tf.reduce_sum(grad*grad)
+  pre_grad_norm = tf.reduce_sum(pre_grad*pre_grad)
 
   def dump_svd_info(step):
     """Dump singular values and gradient values in those coordinates."""
@@ -407,12 +427,12 @@ if __name__=='__main__':
     sess.run(Wf.assign(saved_val)) # restore original value
     return vals
     
-  for i in range(2000):  # todo: rename i to stpe
+  for i in range(1000):  # todo: rename i to step
     update_covariances()
     if i%whiten_every_n_steps==0:
       update_svds()
 
-      #    dump_svd_info(i)
+    #    dump_svd_info(i)
     sess.run(grad.initializer)
     sess.run(pre_grad.initializer)
     
@@ -428,7 +448,7 @@ if __name__=='__main__':
     actual_delta = loss1 - loss0
     actual_slope = actual_delta/lr0
     # occasionally see slope ratio 1.01, due to floating point?
-    slope_ratio = abs(actual_slope)/abs(target_slope) 
+    slope_ratio = actual_slope/target_slope
 
     if do_line_search:
       vals1 = line_search(Wf_copy, pre_grad, lr/100, 40)
@@ -441,7 +461,7 @@ if __name__=='__main__':
     ratios.append(slope_ratio)
 
     if i % report_frequency == 0:
-      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f"%(i, loss0, target_delta, actual_delta, slope_ratio))
+      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(i, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
     
     # don't shrink learning rate once results are very close to minimum
     if adaptive_step_frequency and adaptive_step and i>adaptive_step_burnin:
