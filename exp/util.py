@@ -11,6 +11,8 @@ import time
 import traceback
 import inspect
 
+from scipy import linalg
+
 def concat_blocks(blocks, validate_dims=True):
   """Takes 2d grid of blocks representing matrices and concatenates to single
   matrix (aka ArrayFlatten)"""
@@ -105,8 +107,36 @@ def pseudo_inverse2(svd, eps=1e-7):
     (s, u, v) = (svd.s, svd.u, svd.v)
   else:
     assert False, "Unknown type"
-  si = tf.where(tf.less(s, eps), s, 1./s)
+  max_eigen = tf.reduce_max(s)
+  si = tf.where(s/max_eigen<eps, 0.*s, 1./s)
   return u @ tf.diag(si) @ tf.transpose(v)
+
+def pseudo_inverse_stable(svd, eps=1e-7):
+  """pseudo-inverse, accepting existing values"""
+  # use float32 machine precision as cut-off (works for MKL)
+  # https://www.wolframcloud.com/objects/927b2aa5-de9c-46f5-89fe-c4a58aa4c04b
+  if svd.__class__.__name__=='SvdTuple':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  elif svd.__class__.__name__=='SvdWrapper':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  else:
+    assert False, "Unknown type"
+  max_eigen = tf.reduce_max(s)
+  si = tf.where(s/max_eigen<eps, 0.*s, tf.pow(s, -0.9))
+  return u @ tf.diag(si) @ tf.transpose(v)
+
+def regularized_inverse(mat, l=0.1):
+  return tf.matrix_inverse(mat + l*Identity(int(mat.shape[0])))
+
+def pseudo_inverse_scipy(tensor):
+    dtype = tensor.dtype
+    print(linalg.pinv, tensor, dtype)
+    result = tf.py_func(linalg.pinv, [tensor],
+                        [dtype])[0]
+    result.set_shape(tensor.shape)
+    return result
+  
+  
 
 def Identity(n, dtype=None, name=None):
   """Identity matrix of size n."""
