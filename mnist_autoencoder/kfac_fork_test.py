@@ -394,6 +394,7 @@ if __name__=='__main__':
   else:
     #    u.dump(costs, "linux5.csv")
     targets = np.loadtxt("data/linux5.csv", delimiter=",")
-    
-  u.check_equal(costs[:5], targets[:5])
+
+  # on GTX 1080 TI, have to lower to 1e-5
+  u.check_equal(costs[:5], targets[:5], rtol=1e-5)
   u.summarize_time()
