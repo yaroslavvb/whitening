@@ -350,7 +350,7 @@ def check_equal(a0, b0, rtol=1e-9, atol=1e-12):
     traceback.print_tb(exc_traceback, limit=10, file=sys.stdout)
     efmt = traceback.format_exc()
     print(efmt)
-    import pdb; pdb.set_trace()
+    #    import pdb; pdb.set_trace()
 
 # TensorShape([Dimension(2), Dimension(10)]) => (2, 10)
 def fix_shape(tf_shape):
@@ -647,6 +647,110 @@ class VarInfo:
   def __init__(self, setter, p):
     self.setter = setter
     self.p = p
+
+class SvdTuple:
+  """Object to store svd tuple.
+  Create as SvdTuple((s,u,v)) or SvdTuple(s, u, v).
+  """
+  def __init__(self, suv, *args):
+    if util.list_or_tuple(suv):
+      s, u, v = suv
+    else:
+      s = suv
+      u = args[0]
+      v = args[1]
+      assert len(args) == 2
+    self.s = s
+    self.u = u
+    self.v = v
+
+
+class SvdWrapper:
+  """Encapsulates variables needed to perform SVD of a TensorFlow target.
+  Initialize: wrapper = SvdWrapper(tensorflow_var)
+  Trigger SVD: wrapper.update_tf() or wrapper.update_scipy()
+  Access result as TF vars: wrapper.s, wrapper.u, wrapper.v
+  """
+  
+  def __init__(self, target, name):
+    self.name = name
+    self.target = target
+    self.tf_svd = SvdTuple(tf.svd(target))
+
+    self.init = SvdTuple(
+      u.ones(target.shape[0], name=name+"_s_init"),
+      u.Identity(target.shape[0], name=name+"_u_init"),
+      u.Identity(target.shape[0], name=name+"_v_init")
+    )
+
+    assert self.tf_svd.s.shape == self.init.s.shape
+    assert self.tf_svd.u.shape == self.init.u.shape
+    assert self.tf_svd.v.shape == self.init.v.shape
+
+    self.cached = SvdTuple(
+      tf.Variable(self.init.s, name=name+"_s"),
+      tf.Variable(self.init.u, name=name+"_u"),
+      tf.Variable(self.init.v, name=name+"_v")
+    )
+
+    self.s = self.cached.s
+    self.u = self.cached.u
+    self.v = self.cached.v
+    
+    self.holder = SvdTuple(
+      tf.placeholder(dtype, shape=self.cached.s.shape, name=name+"_s_holder"),
+      tf.placeholder(dtype, shape=self.cached.u.shape, name=name+"_u_holder"),
+      tf.placeholder(dtype, shape=self.cached.v.shape, name=name+"_v_holder")
+    )
+
+    self.update_tf_op = tf.group(
+      self.cached.s.assign(self.tf_svd.s),
+      self.cached.u.assign(self.tf_svd.u),
+      self.cached.v.assign(self.tf_svd.v)
+    )
+
+    self.update_external_op = tf.group(
+      self.cached.s.assign(self.holder.s),
+      self.cached.u.assign(self.holder.u),
+      self.cached.v.assign(self.holder.v)
+    )
+
+    self.init_ops = (self.s.initializer, self.u.initializer, self.v.initializer)
+  
+
+  def update(self):
+    if USE_MKL_SVD:
+      self.update_scipy()
+    else:
+      self.update_tf()
+      
+  def update_tf(self):
+    sess = tf.get_default_session()
+    sess.run(self.update_tf_op)
+    
+  def update_scipy(self):
+    sess = tf.get_default_session()
+    target0 = self.target.eval()
+    # A=u.diag(s).v', singular vectors are columns
+    u0, s0, vt0 = linalg.svd(target0)
+    v0 = vt0.T
+    #    v0 = vt0 # bug, makes loss increase, use for sanity checks
+    feed_dict = {self.holder.u: u0,
+                 self.holder.v: v0,
+                 self.holder.s: s0}
+    sess.run(self.update_external_op, feed_dict=feed_dict)
+
+def extract_grad(grads_and_vars, var):
+  if isinstance(var, str):
+    varname = var
+  else:
+    varname = var.name
+  vals = []
+  for (grad, var) in grads_and_vars:
+    if var.name == varname:
+      vals.append(var)
+  assert length(vals)==1
+  return vals[0]
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
