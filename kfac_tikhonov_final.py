@@ -1,8 +1,9 @@
+# Using Tikhonov regularization
 # conventions. "_op things are ops"
 # "x0" means numpy
 # _live means it's used to update a variable value
 # experiment prefixes
-prefix = "stable"  # stable gradient mode
+prefix = "tikhonov"  # stable gradient mode
 
 import util
 import util as u
@@ -13,6 +14,7 @@ drop_sparsity = True
 use_gpu = True
 do_line_search = False
 intersept_op_creation = False
+use_tikhonov = True
 
 import sys
 whitening_mode = int(sys.argv[1])
@@ -272,8 +274,15 @@ if __name__=='__main__':
     cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
     vars_svd_A[i] = SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
-    whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
-    whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
+    if use_tikhonov:
+      whitened_A = u.regularized_inverse(cov_A[i], 1e-3) @ A[i]
+    else:
+      whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
+    if use_tikhonov:
+      whitened_B2 = u.regularized_inverse(cov_B2[i], 1e-3) @ B[i]
+    else:
+      whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
+      
     whitened_A_stable = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
     whitened_B2_stable = u.pseudo_inverse_sqrt2(vars_svd_B2[i]) @ B[i]
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
@@ -416,6 +425,8 @@ if __name__=='__main__':
 
     # when grad norm<1, Fisher is unstable, switch to Sqrt(Fisher)
     stabilized_mode = grad_norm.eval()<1
+    if use_tikhonov:
+      stabilized_mode = False
 
     if stabilized_mode:
       update_params_stable_op.run()
