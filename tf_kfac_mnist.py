@@ -4,6 +4,9 @@
 prefix = "gd"
 prefix = "adam"  # default gradient lr=1e-3
 prefix = "adam2" # try lr=0.01 (also tried 1.0, 0.1, they diverge)
+prefix = "adam_bn" # relu with with batch norm on first matmul, lr 0.01 sucks, do 0.001 instead
+
+prefix = "adam_no_bn" # same as previous, but batch norm removed
 
 import networkx as nx
 import load_MNIST
@@ -25,7 +28,7 @@ from util import t  # transpose
 
 import load_MNIST
 
-use_batch_norm = False   # with batch norm can't get below 25
+use_batch_norm = True
 num_steps = 20000
 whitening_mode = 0
 
@@ -215,15 +218,18 @@ if __name__ == '__main__':
   for layer in range(1, n+1):
     W.append(init_var(W0[layer-1], "W"+str(layer)))
 
-  def sigmoid(x): return tf.sigmoid(x)
+  def nonlin(x):
+    return tf.nn.relu(x)
+  #    return tf.sigmoid(x)
 
   A = [None]*(n+2)
   with tf.control_dependencies([tf.assert_equal(1, 0, message="too huge")]):
     A[0] = u.Identity(dsize, dtype=dtype)
   A[1] = W[0]
   for i in range(1, n+1):
-    A[i+1] = sigmoid(W[i] @ A[i])
-    if use_batch_norm:
+    A[i+1] = nonlin(W[i] @ A[i])
+    # add batch norm to first layer
+    if use_batch_norm and i==1 and not prefix=='adam_no_bn':
       A[i+1] = tf.contrib.layers.batch_norm(A[i+1], 
                                             center=True, scale=True, 
                                             is_training=True)
@@ -232,7 +238,7 @@ if __name__ == '__main__':
   loss = u.L2(err) / (2 * dsize)
 
   #  opt = tf.train.GradientDescentOptimizer(0.2)
-  opt = tf.train.AdamOptimizer(learning_rate=0.01)
+  opt = tf.train.AdamOptimizer(learning_rate=0.001)
   grads_and_vars = opt.compute_gradients(loss, var_list=W[1:])
   assert grads_and_vars[0][1] == W[1]
   train_op = opt.apply_gradients(grads_and_vars)
