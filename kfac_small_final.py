@@ -1,11 +1,13 @@
 # Mac iteration time: 1606 ms
 # Linux 1080 TI iteration time: 132 ms
 
+# iteration times in ms on on gtx titan x: min: 134.06, median: 155.68
+
 # conventions. "_op things are ops"
 # "x0" means numpy
 # _live means it's used to update a variable value
 # experiment prefixes
-prefix = "small_final" # for checkin
+# prefix = "small_final" # for checkin
 
 import util
 import util as u
@@ -20,7 +22,7 @@ whitening_mode = 4                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 3               # how often to print loss
 
-num_steps = 20000 if whitening_mode==0 else 20
+num_steps = 20000 if whitening_mode==0 else 10000
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = False  # convert sigmoids into linear nonlinearities
