@@ -425,9 +425,8 @@ if __name__=='__main__':
     #    u.dump(losses, "kfac_small_final_linux.csv")
     targets = np.loadtxt("data/kfac_small_final_linux.csv", delimiter=",")
 
-  if len(sys.argv)>1 and sys.argv[1]=="test":
-    # GPU losses are quite noisy, set rtol high
-    u.check_equal(targets, losses[:len(targets)], rtol=1e-3)
+  u.check_equal(targets, losses[:len(targets)], rtol=1e-3)
+  print("Test passed")
     
   u.dump(losses, "%s_losses_%d.csv"%(prefix ,whitening_mode,))
   u.dump(step_lengths, "%s_step_lengths_%d.csv"%(prefix, whitening_mode,))

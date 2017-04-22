@@ -1,8 +1,5 @@
 import tensorflow as tf
 import networkx as nx
-
-default_dtype = tf.float32
-
 import numpy as np
 import os
 import sys
@@ -10,6 +7,13 @@ import tensorflow as tf
 import time
 import traceback
 import inspect
+
+default_dtype = tf.float32
+USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
+
+if USE_MKL_SVD:
+  assert np.__config__.get_info("lapack_mkl_info"), "No MKL detected :("
+
 
 from scipy import linalg
 
@@ -127,8 +131,21 @@ def pseudo_inverse_stable(svd, eps=1e-7):
   si = tf.where(s/max_eigen<eps, 0.*s, tf.pow(s, -0.9))
   return u @ tf.diag(si) @ tf.transpose(v)
 
+# todo: rename l to L
 def regularized_inverse(mat, l=0.1):
   return tf.matrix_inverse(mat + l*Identity(int(mat.shape[0])))
+
+def regularized_inverse2(svd, L=1e-3):
+  """Regularized inverse, working from SVD"""
+  if svd.__class__.__name__=='SvdTuple' or svd.__class__.__name__=='SvdWrapper':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  else:
+    assert False, "Unknown type"
+  max_eigen = tf.reduce_max(s)
+  #  max_eigen = tf.Print(max_eigen, [max_eigen], "max_eigen")
+  #si = 1/(s + L*tf.ones_like(s)/max_eigen)
+  si = 1/(s+L*tf.ones_like(s))
+  return u @ tf.diag(si) @ tf.transpose(v)
 
 def pseudo_inverse_scipy(tensor):
     dtype = tensor.dtype
@@ -653,7 +670,7 @@ class SvdTuple:
   Create as SvdTuple((s,u,v)) or SvdTuple(s, u, v).
   """
   def __init__(self, suv, *args):
-    if util.list_or_tuple(suv):
+    if list_or_tuple(suv):
       s, u, v = suv
     else:
       s = suv
@@ -678,9 +695,9 @@ class SvdWrapper:
     self.tf_svd = SvdTuple(tf.svd(target))
 
     self.init = SvdTuple(
-      u.ones(target.shape[0], name=name+"_s_init"),
-      u.Identity(target.shape[0], name=name+"_u_init"),
-      u.Identity(target.shape[0], name=name+"_v_init")
+      ones(target.shape[0], name=name+"_s_init"),
+      Identity(target.shape[0], name=name+"_u_init"),
+      Identity(target.shape[0], name=name+"_v_init")
     )
 
     assert self.tf_svd.s.shape == self.init.s.shape
@@ -698,9 +715,9 @@ class SvdWrapper:
     self.v = self.cached.v
     
     self.holder = SvdTuple(
-      tf.placeholder(dtype, shape=self.cached.s.shape, name=name+"_s_holder"),
-      tf.placeholder(dtype, shape=self.cached.u.shape, name=name+"_u_holder"),
-      tf.placeholder(dtype, shape=self.cached.v.shape, name=name+"_v_holder")
+      tf.placeholder(default_dtype, shape=self.cached.s.shape, name=name+"_s_holder"),
+      tf.placeholder(default_dtype, shape=self.cached.u.shape, name=name+"_u_holder"),
+      tf.placeholder(default_dtype, shape=self.cached.v.shape, name=name+"_v_holder")
     )
 
     self.update_tf_op = tf.group(
@@ -751,6 +768,17 @@ def extract_grad(grads_and_vars, var):
       vals.append(var)
   assert length(vals)==1
   return vals[0]
+
+def intersept_op_creation(op_type_name_to_intercept):
+  """Drops into PDB when particular op type is added to graph."""
+  from tensorflow.python.framework import op_def_library
+  old_apply_op = op_def_library.OpDefLibrary.apply_op
+  def my_apply_op(obj, op_type_name, name=None, **keywords):
+    print(op_type_name+"-"+str(name))
+    if op_type_name == op_type_name_to_intercept:
+      import pdb; pdb.set_trace()
+    return(old_apply_op(obj, op_type_name, name=name, **keywords))
+  op_def_library.OpDefLibrary.apply_op=my_apply_op
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
