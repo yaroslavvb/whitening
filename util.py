@@ -749,6 +749,7 @@ class SvdWrapper:
     sess = tf.get_default_session()
     target0 = self.target.eval()
     # A=u.diag(s).v', singular vectors are columns
+    # TODO: catch "ValueError: array must not contain infs or NaNs"
     u0, s0, vt0 = linalg.svd(target0)
     v0 = vt0.T
     #    v0 = vt0 # bug, makes loss increase, use for sanity checks
