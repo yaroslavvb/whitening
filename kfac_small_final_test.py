@@ -427,14 +427,4 @@ if __name__=='__main__':
 
   u.check_equal(targets, losses[:len(targets)], rtol=1e-3)
   print("Test passed")
-    
-  u.dump(losses, "%s_losses_%d.csv"%(prefix ,whitening_mode,))
-  u.dump(step_lengths, "%s_step_lengths_%d.csv"%(prefix, whitening_mode,))
-  u.dump(ratios, "%s_ratios_%d.csv"%(prefix, whitening_mode,))
-  u.dump(grad_norms, "%s_grad_norms_%d.csv"%(prefix, whitening_mode,))
-  u.dump(pre_grad_norms, "%s_pre_grad_norms_%d.csv"%(prefix, whitening_mode,))
-  u.dump(pre_grad_stable_norms, "%s_pre_grad_stable_norms_%d.csv"%(prefix, whitening_mode,))
-  u.dump(target_delta_list, "%s_target_delta_%d.csv"%(prefix, whitening_mode,))
-  u.dump(target_delta2_list, "%s_target_delta2_%d.csv"%(prefix, whitening_mode,))
-  u.dump(actual_delta_list, "%s_actual_delta_%d.csv"%(prefix, whitening_mode,))
-  u.summarize_time()
+
