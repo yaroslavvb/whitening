@@ -1,0 +1,10 @@
+__pycache__
+.ipynb_checkpoints
+*.py#
+*.tex#
+*.nb
+*.log
+*.dvi
+*.aux
+*.csv
+*.ipynb
