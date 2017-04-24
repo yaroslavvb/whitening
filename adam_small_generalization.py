@@ -7,7 +7,7 @@ prefix = "adam2" # try lr=0.01 (also tried 1.0, 0.1, they diverge)
 prefix = "adam_bn" # relu with with batch norm on first matmul, lr 0.01 sucks, do 0.001 instead
 
 prefix = "adam_no_bn" # same as previous, but batch norm removed
-prefix = "temp"
+prefix = "adam_generalize"
 
 import networkx as nx
 import load_MNIST
@@ -30,8 +30,12 @@ from util import t  # transpose
 import load_MNIST
 
 use_batch_norm = False
-num_steps = 20000
+num_steps = 10000
 whitening_mode = 0
+run_small = True    # overrides dsize and num_steps
+
+if len(sys.argv)>1 and sys.argv[1]=='doit':
+  run_small = False
 
 whiten_every_n_steps = 1
 report_frequency = 1
@@ -169,15 +173,21 @@ def kfac_optimizer(model_creator):
 
 
 if __name__ == '__main__':
+  dsize = 10000
+  if run_small:
+    dsize = 1000
+    num_steps = 100
 
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
-  dsize = 10000
   patches = train_images[:,:dsize];
+  test_patches = train_images[:,-dsize:]
+  assert dsize<25000
   X0=patches
   fs = [dsize, 28*28, 196, 28*28]
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   dsize = f(-1)
   n = len(fs) - 2
+
 
   eval_batch_size = 100
 
@@ -244,6 +254,13 @@ if __name__ == '__main__':
   assert grads_and_vars[0][1] == W[1]
   train_op = opt.apply_gradients(grads_and_vars)
 
+  # create validation loss eval
+  layer = init_var(test_patches, "X_test")
+  for i in range(1, n+1):
+    layer = nonlin(W[i] @ layer)
+  err = (layer - test_patches)
+  vloss = u.L2(err) / (2 * dsize)
+
   init_op = tf.global_variables_initializer()
   sess = tf.InteractiveSession()
   sess.run(init_op, feed_dict=init_dict)
@@ -266,16 +283,17 @@ if __name__ == '__main__':
 
   
   losses = []
+  vlosses = []
   u.record_time()
   for step in range(num_steps):
-    loss0 = loss.eval()
+    (loss0, vloss0) = sess.run([loss,vloss])
     losses.append(loss0)
+    vlosses.append(vloss0)
     sess.run(train_op)
     if step % report_frequency == 0:
       print("Step %d loss %.2f"%(step, loss0))
     u.record_time()
 
   u.summarize_time()
-
-
-  u.dump(losses, "%s_losses_%d.csv"%(prefix, whitening_mode,))
+  u.dump(losses, "%s_losses.csv"%(prefix,))
+  u.dump(vlosses, "%s_vlosses.csv"%(prefix,))
