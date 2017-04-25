@@ -8,36 +8,39 @@
 # _live means it's used to update a variable value
 # experiment prefixes
 # prefix = "small_final" # for checkin
-prefix = "generalize"
+prefix = "relu2"   # line search mode
+prefix = "relu"    # regular mode
+
 
 import util
 import util as u
+import sys
 
 drop_l2 = True               # drop L2 term
 drop_sparsity = True         # drop KL term
 use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
 
-import sys
-run_small = False    # overrides dsize and num_steps
-whitening_mode = 4                 # 0 for gradient, 4 for full whitening
+whitening_mode = 4                 # 0 for no whiten, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 3               # how often to print loss
 
-num_steps = 10000
+num_steps = 500
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
+# nonlinearity: only one of options below must be set
 purely_linear = False  # convert sigmoids into linear nonlinearities
+purely_relu = True     # convert sigmoids into ReLUs
+
+# regularization
 use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
 
 # adaptive line search
 adaptive_step = False     # adjust step length based on predicted decrease
 adaptive_step_frequency = 1 # how often to adjust
-adaptive_step_burn_in = 0 # let optimization go for a bit before adjusting
+adaptive_step_burn_in = 10 # let optimization go for a bit before adjusting
 local_quadratics = False  # use quadratic approximation to predict loss drop
-
-measure_validation = True
 
 import networkx as nx
 import load_MNIST
@@ -74,13 +77,7 @@ if __name__=='__main__':
   machine_epsilon = np.finfo(dtype).eps # 1e-7 or 1e-16
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
   dsize = 10000
-  if run_small:
-    dsize = 1000
-    num_steps = 100
-    
   patches = train_images[:,:dsize];
-  test_patches = train_images[:,-dsize:]
-  assert dsize<25000
   fs = [dsize, 28*28, 196, 28*28]
 
   # values from deeplearning.stanford.edu/wiki/index.php/UFLDL_Tutorial
@@ -122,23 +119,29 @@ if __name__=='__main__':
   X = init_var(X0, "X")
   W.insert(0, X)
 
-  def sigmoid(x):
-    if not purely_linear:
-      return tf.sigmoid(x)
-    else:
-      return tf.identity(x)
-      
-  def d_sigmoid(y):
-    if not purely_linear:
-      return y*(1-y)
-    else:
-      return 1
-    
   def kl(x, y):
     return x * tf.log(x / y) + (1 - x) * tf.log((1 - x) / (1 - y))
   def d_kl(x, y):
     return (1-x)/(1-y) - x/y
   
+  # TODO: rename into "nonlin"
+  def sigmoid(x):
+    if purely_relu:
+      return tf.nn.relu(x)
+    elif purely_linear:
+      return tf.identity(x)
+    else:
+      return tf.sigmoid(x)
+      
+  # TODO: rename into "nonlin_d"
+  def d_sigmoid(y):
+    if purely_relu:
+      return u.relu_mask(y)
+    elif purely_linear:
+      return 1
+    else: 
+      return y*(1-y)
+    
   # A[i] = activations needed to compute gradient of W[i]
   # A[n+1] = network output
   A = [None]*(n+2)
@@ -273,15 +276,9 @@ if __name__=='__main__':
     sess = tf.get_default_session()
     sess.run(ops)
       
-  # create validation loss eval
-  layer = init_var(test_patches, "X_test")
-  for i in range(1, n+1):
-    layer = sigmoid(W[i] @ layer)
-  err = (layer - test_patches)
-  vloss = u.L2(err) / (2 * dsize)
-
   init_op = tf.global_variables_initializer()
   #  tf.get_default_graph().finalize()
+  
   sess = tf.InteractiveSession()
   sess.run(Wf.initializer, feed_dict=init_dict)
   sess.run(X.initializer, feed_dict=init_dict)
@@ -295,7 +292,6 @@ if __name__=='__main__':
 
   step_lengths = []     # keep track of learning rates
   losses = []
-  vlosses = []
   ratios = []           # actual loss decrease / expected decrease
   grad_norms = []       
   pre_grad_norms = []   # preconditioned grad norm squared
@@ -362,12 +358,8 @@ if __name__=='__main__':
 
     sess.run(grad.initializer)
     sess.run(pre_grad.initializer)
-
-    if measure_validation:
-      lr0, loss0, vloss0 = sess.run([lr, loss, vloss])
-    else:
-      lr0, loss0 = sess.run([lr, loss])
-      vloss0 = 0
+    
+    lr0, loss0 = sess.run([lr, loss])
     save_params_op.run()
 
     # regular inverse becomes unstable when grad norm exceeds 1
@@ -413,7 +405,6 @@ if __name__=='__main__':
       u.dump(vals2, "line2-%d"%(i,))
       
     losses.append(loss0)
-    vlosses.append(vloss0)
     step_lengths.append(lr0)
     ratios.append(slope_ratio)
     grad_norms.append(grad_norm.eval())
@@ -421,8 +412,7 @@ if __name__=='__main__':
     pre_grad_stable_norms.append(pre_grad_stable_norm.eval())
 
     if step % report_frequency == 0:
-      print("Step %d loss %.2f, vloss: %.2f, target decrease %.3f, actual decrease, %.3f"%(step, loss0, vloss0, target_delta, actual_delta))
-#      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(step, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
+      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(step, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
     
     if adaptive_step_frequency and adaptive_step and step>adaptive_step_burn_in:
       # shrink if wrong prediction, don't shrink if prediction is tiny
@@ -440,16 +430,27 @@ if __name__=='__main__':
 
     u.record_time()
 
+  # check against expected loss
+  if 'Apple' in sys.version:
+    pass
+    #    u.dump(losses, "kfac_small_final_mac.csv")
+    targets = np.loadtxt("data/kfac_small_final_mac.csv", delimiter=",")
+  else:
+    pass
+    #    u.dump(losses, "kfac_small_final_linux.csv")
+    targets = np.loadtxt("data/kfac_small_final_linux.csv", delimiter=",")
+
+  if len(sys.argv)>1 and sys.argv[1]=="test":
+    # GPU losses are quite noisy, set rtol high
+    u.check_equal(targets, losses[:len(targets)], rtol=1e-3)
     
-  
-  u.dump(losses, "%s_losses.csv"%(prefix))
-  u.dump(vlosses, "%s_vlosses.csv"%(prefix,))
-  u.dump(step_lengths, "%s_step_lengths.csv"%(prefix,))
-  u.dump(ratios, "%s_ratios.csv"%(prefix,))
-  u.dump(grad_norms, "%s_grad_norms.csv"%(prefix,))
-  u.dump(pre_grad_norms, "%s_pre_grad_norms.csv"%(prefix,))
-  u.dump(pre_grad_stable_norms, "%s_pre_grad_stable_norms.csv"%(prefix,))
-  u.dump(target_delta_list, "%s_target_delta.csv"%(prefix,))
-  u.dump(target_delta2_list, "%s_target_delta2.csv"%(prefix,))
-  u.dump(actual_delta_list, "%s_actual_delta.csv"%(prefix,))
+  u.dump(losses, "%s_losses_%d.csv"%(prefix ,whitening_mode,))
+  u.dump(step_lengths, "%s_step_lengths_%d.csv"%(prefix, whitening_mode,))
+  u.dump(ratios, "%s_ratios_%d.csv"%(prefix, whitening_mode,))
+  u.dump(grad_norms, "%s_grad_norms_%d.csv"%(prefix, whitening_mode,))
+  u.dump(pre_grad_norms, "%s_pre_grad_norms_%d.csv"%(prefix, whitening_mode,))
+  u.dump(pre_grad_stable_norms, "%s_pre_grad_stable_norms_%d.csv"%(prefix, whitening_mode,))
+  u.dump(target_delta_list, "%s_target_delta_%d.csv"%(prefix, whitening_mode,))
+  u.dump(target_delta2_list, "%s_target_delta2_%d.csv"%(prefix, whitening_mode,))
+  u.dump(actual_delta_list, "%s_actual_delta_%d.csv"%(prefix, whitening_mode,))
   u.summarize_time()
