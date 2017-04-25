@@ -558,7 +558,14 @@ def record_time():
   new_time = time.time()
   global_time_list.append(new_time - global_last_time)
   global_last_time = time.time()
-  
+
+def last_time():
+  global global_last_time, global_time_list
+  if global_time_list:
+    return 1000*global_time_list[-1]
+  else:
+    return 0
+
 def summarize_time(time_list=None):
   if time_list is None:
     time_list = global_time_list
