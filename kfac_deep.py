@@ -15,7 +15,8 @@ prefix = "kfac_deep0"    # no whitening
 prefix = "kfac_deep1"    # use sigmoids (can't optimize below 26.38, vanish grads)
 prefix = "kfac_deep_long"    # regular mode
 prefix = "kfac_deep_long_fixed"    # fixed adaptive step growing
-
+prefix = "temp"    # fixed adaptive step growing
+prefix = "images"
 
 import util
 import util as u
@@ -29,13 +30,14 @@ drop_l2 = True               # drop L2 term
 drop_sparsity = True         # drop KL term
 use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
+dump_images = True           # dump first few images
 
 whitening_mode = 4                 # 0 for no whiten, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 3               # how often to print loss
 measure_validation = True
 
-num_steps = 10000
+num_steps = 2000
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 # nonlinearity: only one of options below must be set
@@ -501,4 +503,13 @@ if __name__=='__main__':
   u.dump(target_delta_list, "%s_target_delta.csv"%(prefix,))
   u.dump(target_delta2_list, "%s_target_delta2.csv"%(prefix,))
   u.dump(actual_delta_list, "%s_actual_delta.csv"%(prefix,))
+
+  if dump_images:
+    num_images = 100
+    u.dump(A[1][:,:num_images].eval(), "%s_images_pre.csv"%(prefix,))
+    u.dump(A[n+1][:,:num_images].eval(), "%s_images_post.csv"%(prefix,))
+    
+    
+  u.dump(actual_delta_list, "%s_actual_delta.csv"%(prefix,))
+    
   u.summarize_time()
