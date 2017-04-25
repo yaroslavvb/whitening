@@ -8,7 +8,7 @@
 # _live means it's used to update a variable value
 # experiment prefixes
 # prefix = "small_final" # for checkin
-prefix = "joint1"
+prefix = "joint2"
 
 import util
 import util as u
@@ -20,7 +20,7 @@ do_line_search = False       # line-search and dump values at each iter
 
 import sys
 whitening_mode = 4                 # 0 for gradient, 4 for full kfac whitening, 5 for kfac++ whitening
-if prefix == "joint1":
+if prefix.startswith("joint"):
   whitening_mode = 5
   
 whiten_every_n_steps = 1           # how often to whiten
@@ -34,7 +34,7 @@ use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
 
 # adaptive line search
-adaptive_step = False     # adjust step length based on predicted decrease
+adaptive_step = True     # adjust step length based on predicted decrease
 adaptive_step_frequency = 1 # how often to adjust
 adaptive_step_burn_in = 0 # let optimization go for a bit before adjusting
 local_quadratics = False  # use quadratic approximation to predict loss drop
@@ -238,6 +238,7 @@ if __name__=='__main__':
   update_params_stable_op = Wf.assign(Wf-lr*pre_grad_stable).op
   update_params_joint_op = Wf.assign(Wf-lr*pre_grad_joint).op
   save_params_op = Wf_copy.assign(Wf).op
+  restore_params_op = Wf.assign(Wf_copy).op
   pre_grad_dot_grad = tf.reduce_sum(pre_grad*grad)
   # TODO: change pre_grad to pre_grad_stable
   pre_grad_stable_dot_grad = tf.reduce_sum(pre_grad*grad)
@@ -442,6 +443,10 @@ if __name__=='__main__':
     pre_grad_norms.append(pre_grad_norm.eval())
     pre_grad_stable_norms.append(pre_grad_stable_norm.eval())
 
+    if actual_delta > 0:
+      print("Observed increase in loss %.2f, rejecting step"%(actual_delta,))
+      restore_params_op.run()
+      
     if step % report_frequency == 0:
       print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(step, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
     
@@ -453,7 +458,7 @@ if __name__=='__main__':
         sess.run(vard[lr].setter, feed_dict={vard[lr].p: lr0*beta})
         
       # grow learning rate, slope_ratio .99 worked best for gradient
-      elif step>0 and i%50 == 0 and slope_ratio>0.90 and adaptive_step:
+      elif step>0 and step%50 == 0 and slope_ratio>0.90 and adaptive_step:
           print("%.2f %.2f %.2f"%(loss0, loss1, slope_ratio))
           print("Growing learning rate to %.2f"%(lr0*growth_rate))
           sess.run(vard[lr].setter, feed_dict={vard[lr].p:
