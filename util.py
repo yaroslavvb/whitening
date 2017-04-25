@@ -310,6 +310,15 @@ def unflatten_np(Wf, fs):
   Ws = [unvectorize_np(Wsf[i], dims[i][0]) for i in range(len(sizes))]
   return Ws
 
+def flatten_np(Ws):
+  return np.concatenate([np.reshape(vectorize_np(W),(-1,)) for W in Ws],
+                          axis=0)
+def flatten_np_test():
+  vec = np.asarray(range(1, 11))
+  fs = [2,2,2,1]
+  result = unflatten_np(vec, fs)
+  result2 = flatten_np(result)
+  check_equal(vec, result2)
 
 def unflatten(Wf, fs):
   """Turn flattened Tensor into list of rank-2 tensors with given sizes."""
