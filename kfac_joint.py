@@ -8,6 +8,7 @@
 # _live means it's used to update a variable value
 # experiment prefixes
 # prefix = "small_final" # for checkin
+prefix = "joint1"
 
 import util
 import util as u
@@ -18,11 +19,14 @@ use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
 
 import sys
-whitening_mode = 4                 # 0 for gradient, 4 for full whitening
+whitening_mode = 4                 # 0 for gradient, 4 for full kfac whitening, 5 for kfac++ whitening
+if prefix == "joint1":
+  whitening_mode = 5
+  
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 3               # how often to print loss
 
-num_steps = 20000 if whitening_mode==0 else 10000
+num_steps = 100
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = False  # convert sigmoids into linear nonlinearities
@@ -148,6 +152,8 @@ if __name__=='__main__':
   # B2[i] = backprops from sampled labels needed for natural gradient
   B = [None]*(n+1)
   B2 = [None]*(n+1)
+  AB = [None]*(n+1)
+  AB2 = [None]*(n+1)
   B[n] = err*d_sigmoid(A[n+1])
   sampled_labels_live = tf.random_normal((f(n), f(-1)), dtype=dtype, seed=0)
   sampled_labels = init_var(sampled_labels_live, "sampled_labels", noinit=True)
@@ -165,16 +171,23 @@ if __name__=='__main__':
   dW = [None]*(n+1)
   pre_dW = [None]*(n+1)  # preconditioned dW
   pre_dW_stable = [None]*(n+1)  # preconditioned stable dW
+  pre_dW_joint = [None]*(n+1)  # jointly whitened dW
 
   cov_A = [None]*(n+1)    # covariance of activations[i]
   cov_B2 = [None]*(n+1)   # covariance of synthetic backprops[i]
+  cov_AB2 = [None]*(n+1)  # joined activations and backprops
   vars_svd_A = [None]*(n+1)
   vars_svd_B2 = [None]*(n+1)
+  vars_svd_AB2 = [None]*(n+1)
   for i in range(1,n+1):
     cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
     cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
+    AB[i] = tf.concat((A[i],B[i]),axis=0)
+    AB2[i] = tf.concat((A[i],B2[i]),axis=0)
+    cov_AB2[i] = init_var(AB2[i]@t(AB2[i])/dsize, "cov_AB2%d"%(i,))
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
+    vars_svd_AB2[i] = u.SvdWrapper(cov_AB2[i],"svd_AB2_%d"%(i,))
     if use_tikhonov:
       whitened_A = u.regularized_inverse2(vars_svd_A[i],L=Lambda) @ A[i]
     else:
@@ -183,10 +196,22 @@ if __name__=='__main__':
       whitened_B2 = u.regularized_inverse2(vars_svd_B2[i],L=Lambda) @ B[i]
     else:
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
+    if use_tikhonov:
+      whitened_AB = u.regularized_inverse2(vars_svd_AB2[i],L=Lambda) @ AB[i]
+    else:
+      whitened_AB = u.pseudo_inverse2(vars_svd_AB2[i]) @ AB[i]
     whitened_A_stable = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
+    # todo: rename to whitened_B_stable
     whitened_B2_stable = u.pseudo_inverse_sqrt2(vars_svd_B2[i]) @ B[i]
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
     pre_dW_stable[i] = (whitened_B2_stable @ t(whitened_A_stable))/dsize
+    
+    whitened_A_joint = whitened_AB[:f(i-1)]
+    whitened_B_joint = whitened_AB[f(i-1):]
+    assert int(whitened_B_joint.shape[0]) == f(i)
+
+    pre_dW_joint[i] = (whitened_B_joint @ t(whitened_A_joint))/dsize
+    
     dW[i] = (B[i] @ t(A[i]))/dsize
 
   # Loss function
@@ -203,18 +228,24 @@ if __name__=='__main__':
   grad_live = u.flatten(dW[1:])
   pre_grad_live = u.flatten(pre_dW[1:]) # fisher preconditioned gradient
   pre_grad_stable_live = u.flatten(pre_dW_stable[1:]) # sqrt fisher preconditioned grad
+  pre_grad_joint_live = u.flatten(pre_dW_joint[1:]) # joint whitening
   grad = init_var(grad_live, "grad")
   pre_grad = init_var(pre_grad_live, "pre_grad")
   pre_grad_stable = init_var(pre_grad_stable_live, "pre_grad_stable")
+  pre_grad_joint = init_var(pre_grad_joint_live, "pre_grad_joint")
 
   update_params_op = Wf.assign(Wf-lr*pre_grad).op
   update_params_stable_op = Wf.assign(Wf-lr*pre_grad_stable).op
+  update_params_joint_op = Wf.assign(Wf-lr*pre_grad_joint).op
   save_params_op = Wf_copy.assign(Wf).op
   pre_grad_dot_grad = tf.reduce_sum(pre_grad*grad)
+  # TODO: change pre_grad to pre_grad_stable
   pre_grad_stable_dot_grad = tf.reduce_sum(pre_grad*grad)
+  pre_grad_joint_dot_grad = tf.reduce_sum(pre_grad_joint*grad)
   grad_norm = tf.reduce_sum(grad*grad)
   pre_grad_norm = u.L2(pre_grad)
   pre_grad_stable_norm = u.L2(pre_grad_stable)
+  pre_grad_joint_norm = u.L2(pre_grad_joint)
 
   def dump_svd_info(step):
     """Dump singular values and gradient values in those coordinates."""
@@ -253,6 +284,9 @@ if __name__=='__main__':
       vars_svd_B2[2].update()
     if whitening_mode>3:
       vars_svd_B2[1].update()
+    if whitening_mode>4:
+      vars_svd_AB2[1].update()
+      vars_svd_AB2[2].update()
 
   def init_svds():
     """Initialize our SVD to identity matrices."""
@@ -260,6 +294,7 @@ if __name__=='__main__':
     for i in range(1, n+1):
       ops.extend(vars_svd_A[i].init_ops)
       ops.extend(vars_svd_B2[i].init_ops)
+      ops.extend(vars_svd_AB2[i].init_ops)
     sess = tf.get_default_session()
     sess.run(ops)
       
@@ -296,10 +331,13 @@ if __name__=='__main__':
     sess.run(cov_A[i].initializer)
   def update_cov_B2(i):
     sess.run(cov_B2[i].initializer)
+  def update_cov_AB2(i):
+    sess.run(cov_AB2[i].initializer)
 
   # only update whitening matrix of input activations in the beginning
   if whitening_mode>0:
     vars_svd_A[1].update()
+    vars_svd_AB2[1].update() # TODO: need to backprop synth labels first?
 
   # compute t(delta).H.delta/2
   def hessian_quadratic(delta):
@@ -352,10 +390,13 @@ if __name__=='__main__':
     # regular inverse becomes unstable when grad norm exceeds 1
     stabilized_mode = grad_norm.eval()<1
 
-    if stabilized_mode and not use_tikhonov:
-      update_params_stable_op.run()
+    if whitening_mode == 5:
+      update_params_joint_op.run()
     else:
-      update_params_op.run()
+      if stabilized_mode and not use_tikhonov:
+        update_params_stable_op.run()
+      else:
+        update_params_op.run()
 
     loss1 = loss.eval()
     advance_batch()
@@ -363,6 +404,9 @@ if __name__=='__main__':
     # line search stuff
     target_slope = (-pre_grad_dot_grad.eval() if stabilized_mode else
                     -pre_grad_stable_dot_grad.eval())
+    if whitening_mode == 5:
+      target_slope = (-pre_grad_joint_dot_grad.eval())
+      
     target_delta = lr0*target_slope
     target_delta_list.append(target_delta)
 
