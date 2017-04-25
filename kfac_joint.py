@@ -8,7 +8,7 @@
 # _live means it's used to update a variable value
 # experiment prefixes
 # prefix = "small_final" # for checkin
-prefix = "joint3"
+prefix = "ref"
 
 import util
 import util as u
@@ -30,6 +30,8 @@ num_steps = 100
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = False  # convert sigmoids into linear nonlinearities
+purely_relu = True     # convert sigmoids into ReLUs
+
 use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
 
@@ -116,17 +118,23 @@ if __name__=='__main__':
   X = init_var(X0, "X")
   W.insert(0, X)
 
+  # TODO: rename into "nonlin"
   def sigmoid(x):
-    if not purely_linear:
-      return tf.sigmoid(x)
-    else:
+    if purely_relu:
+      return tf.nn.relu(x)
+    elif purely_linear:
       return tf.identity(x)
-      
-  def d_sigmoid(y):
-    if not purely_linear:
-      return y*(1-y)
     else:
+      return tf.sigmoid(x)
+      
+  # TODO: rename into "nonlin_d"
+  def d_sigmoid(y):
+    if purely_relu:
+      return u.relu_mask(y)
+    elif purely_linear:
       return 1
+    else: 
+      return y*(1-y)
     
   def kl(x, y):
     return x * tf.log(x / y) + (1 - x) * tf.log((1 - x) / (1 - y))
