@@ -14,6 +14,7 @@ prefix = "kfac_deep"    # regular mode
 prefix = "kfac_deep0"    # no whitening
 prefix = "kfac_deep1"    # use sigmoids (can't optimize below 26.38, vanish grads)
 prefix = "kfac_deep_long"    # regular mode
+prefix = "kfac_deep_long_fixed"    # fixed adaptive step growing
 
 
 import util
@@ -456,9 +457,9 @@ if __name__=='__main__':
       restore_params_op.run()
       
     if step % report_frequency == 0:
-      #print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f, time: %.2f"%(step, loss0, target_delta, actual_delta, u.last_time()))
+      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f, time: %.2f"%(step, loss0, target_delta, actual_delta, u.last_time()))
     
-      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(step, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
+      #print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(step, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
 
     if adaptive_step_frequency and adaptive_step and step>adaptive_step_burn_in:
       # shrink if wrong prediction, don't shrink if prediction is tiny
