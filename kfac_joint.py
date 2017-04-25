@@ -235,8 +235,8 @@ if __name__=='__main__':
   pre_grad_stable = init_var(pre_grad_stable_live, "pre_grad_stable")
   pre_grad_joint = init_var(pre_grad_joint_live, "pre_grad_joint")
 
-  #update_params_op = Wf.assign(Wf-lr*pre_grad).op
-  #update_params_stable_op = Wf.assign(Wf-lr*pre_grad_stable).op
+  update_params_op = Wf.assign(Wf-lr*pre_grad).op
+  update_params_stable_op = Wf.assign(Wf-lr*pre_grad_stable).op
   update_params_joint_op = Wf.assign(Wf-lr*pre_grad_joint).op
   save_params_op = Wf_copy.assign(Wf).op
   restore_params_op = Wf.assign(Wf_copy).op
@@ -386,6 +386,8 @@ if __name__=='__main__':
 
     sess.run(grad.initializer)
     sess.run(pre_grad.initializer)
+    sess.run(pre_grad_joint.initializer)
+    # TODO: run pre_grad_stable initializer
     
     lr0, loss0 = sess.run([lr, loss])
     save_params_op.run()
