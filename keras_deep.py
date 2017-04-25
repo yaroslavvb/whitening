@@ -17,8 +17,9 @@ import numpy
 import sys
 
 #prefix = "100_"+sys.argv[1]  # raise epochs
-batch_size=100
+batch_size=10000
 prefix = "keras_deep_long"
+prefix = "keras_deep_long_full"  # large batch
 epochs = 20000 # 2 sec per epoch, 12 hours
 
 
