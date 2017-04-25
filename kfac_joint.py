@@ -8,7 +8,7 @@
 # _live means it's used to update a variable value
 # experiment prefixes
 # prefix = "small_final" # for checkin
-prefix = "joint2"
+prefix = "joint3"
 
 import util
 import util as u
@@ -198,6 +198,8 @@ if __name__=='__main__':
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
     if use_tikhonov:
       whitened_AB = u.regularized_inverse2(vars_svd_AB2[i],L=Lambda) @ AB[i]
+      #      whitened_AB = u.pseudo_inverse2(vars_svd_AB2[i]) @ AB[i]
+      #      whitened_AB = u.pseudo_inverse_sqrt2(vars_svd_AB2[i]) @ AB[i]
     else:
       whitened_AB = u.pseudo_inverse2(vars_svd_AB2[i]) @ AB[i]
     whitened_A_stable = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
@@ -211,7 +213,6 @@ if __name__=='__main__':
     assert int(whitened_B_joint.shape[0]) == f(i)
 
     pre_dW_joint[i] = (whitened_B_joint @ t(whitened_A_joint))/dsize
-    
     dW[i] = (B[i] @ t(A[i]))/dsize
 
   # Loss function
@@ -234,8 +235,8 @@ if __name__=='__main__':
   pre_grad_stable = init_var(pre_grad_stable_live, "pre_grad_stable")
   pre_grad_joint = init_var(pre_grad_joint_live, "pre_grad_joint")
 
-  update_params_op = Wf.assign(Wf-lr*pre_grad).op
-  update_params_stable_op = Wf.assign(Wf-lr*pre_grad_stable).op
+  #update_params_op = Wf.assign(Wf-lr*pre_grad).op
+  #update_params_stable_op = Wf.assign(Wf-lr*pre_grad_stable).op
   update_params_joint_op = Wf.assign(Wf-lr*pre_grad_joint).op
   save_params_op = Wf_copy.assign(Wf).op
   restore_params_op = Wf.assign(Wf_copy).op
@@ -276,7 +277,8 @@ if __name__=='__main__':
   def update_covariances():
     ops_A = [cov_A[i].initializer for i in range(1, n+1)]
     ops_B2 = [cov_B2[i].initializer for i in range(1, n+1)]
-    sess.run(ops_A+ops_B2)
+    ops_AB2 = [cov_AB2[i].initializer for i in range(1, n+1)]
+    sess.run(ops_A+ops_B2+ops_AB2)
 
   def update_svds():
     if whitening_mode>1:
@@ -328,12 +330,12 @@ if __name__=='__main__':
   beta=0.8    # how much to shrink when violation
   growth_rate=1.05  # how much to grow when too conservative
     
-  def update_cov_A(i):
-    sess.run(cov_A[i].initializer)
-  def update_cov_B2(i):
-    sess.run(cov_B2[i].initializer)
-  def update_cov_AB2(i):
-    sess.run(cov_AB2[i].initializer)
+  # def update_cov_A(i):
+  #   sess.run(cov_A[i].initializer)
+  # def update_cov_B2(i):
+  #   sess.run(cov_B2[i].initializer)
+  # def update_cov_AB2(i):
+  #   sess.run(cov_AB2[i].initializer)
 
   # only update whitening matrix of input activations in the beginning
   if whitening_mode>0:
