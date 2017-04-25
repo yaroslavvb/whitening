@@ -18,8 +18,10 @@ import sys
 
 #prefix = "100_"+sys.argv[1]  # raise epochs
 batch_size=100
-prefix = "keras_deep"
-epochs = 1000
+prefix = "keras_deep_long"
+epochs = 20000 # 2 sec per epoch, 12 hours
+
+
 
 
 from keras import optimizers
