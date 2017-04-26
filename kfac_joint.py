@@ -9,6 +9,9 @@
 # experiment prefixes
 # prefix = "small_final" # for checkin
 prefix = "ref"
+prefix = "joint7"  # longer experiment 12 per 30 iterations. 10 iters in 4 sec
+prefix = "joint8"  # use sqrt(fisher) on second layer
+prefix = "ref2"    # longer run with regular whitening for comparison
 
 import util
 import util as u
@@ -26,7 +29,7 @@ if prefix.startswith("joint"):
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 3               # how often to print loss
 
-num_steps = 100
+num_steps = 5000
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = False  # convert sigmoids into linear nonlinearities
@@ -205,9 +208,9 @@ if __name__=='__main__':
     else:
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
     if use_tikhonov:
-      whitened_AB = u.regularized_inverse2(vars_svd_AB2[i],L=Lambda) @ AB[i]
-      #      whitened_AB = u.pseudo_inverse2(vars_svd_AB2[i]) @ AB[i]
-      #      whitened_AB = u.pseudo_inverse_sqrt2(vars_svd_AB2[i]) @ AB[i]
+      #whitened_AB = u.regularized_inverse2(vars_svd_AB2[i],L=Lambda) @ AB[i]
+      #whitened_AB = u.pseudo_inverse2(vars_svd_AB2[i]) @ AB[i]
+      whitened_AB = u.pseudo_inverse_sqrt2(vars_svd_AB2[i]) @ AB[i]
     else:
       whitened_AB = u.pseudo_inverse2(vars_svd_AB2[i]) @ AB[i]
     whitened_A_stable = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
