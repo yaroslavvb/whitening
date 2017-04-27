@@ -60,14 +60,14 @@ Since Kronecker product commutes with matrix inverse, preconditioner can be writ
 $$H^{-1}\approx \left(AA'\right)^{-1}\otimes \left(BB'\right)^{-1}$$
 
 \section*{Convolutional Network}
-So far we obtained the Hessian with respect to matrix variable $W$. Suppose our operation is a convolution, in which case we can write it as matrix multiplication where $W$ is a function of another variable, written as $W=KU$. Here $U$ represents our matrix of tunable parameters and $K$ is the parameter tiling matrix that generates the convolution matmul. The derivative of $W$ with respect to $U$ can be written as (p.205 of Magnus)
+So far we obtained the Hessian with respect to matrix variable $W$. Suppose our operation is a convolution, in which case we can write it as matrix multiplication where $W$ is a function of another variable, written as $vec(W)=KU$. Here $U$ represents our matrix of tunable parameters and $K$ is the parameter tiling matrix that generates the convolution matmul. The derivative of $W$ with respect to $U$ can be written as (p.205 of Magnus)
 
 $$\frac{dW}{dU} = (I\otimes K)$$
 
 Using this and chain rule for Hessian matrices (p.125 of Magnus), original Hessian of our loss with respect to $U$ can be written 
 
 $$H_u=(I'\otimes K')(AA'\otimes BB')(I\otimes K)$$
-Rearranging we get
+If dimensions are compatible we can apply mixed-product property to get
 $$H_u=(AA'\otimes K'BB'K)$$
 Applying same steps as for piecewise linear network we get Kronecker factorized Hessian as
 $$H\approx AA' \otimes K'BB'K$$
