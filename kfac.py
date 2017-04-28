@@ -1,5 +1,5 @@
-no_whitening = True
 adaptive_step = False     # adjust step length based on predicted decrease
+whitening_mode = 0
 
 prefix="kfac1"
 
@@ -208,8 +208,6 @@ class Kfac():
       kfac[var].B2 = Covariance(B2, var, "B2")
 
     s.grad_new = kfac.correct(s.grad)  # this is off by 2x when whitened
-    if no_whitening:
-      s.grad_new = s.grad
 
     # norm and dot are off by factor of 2x, missing half of the tensor?
     # todo: add tests to new grads class
@@ -280,7 +278,7 @@ class Kfac():
     kfac.sess.run(ops)
 
     # update SVDs
-    if no_whitening:
+    if whitening_mode == 0:
       return
     
     for var in kfac:
@@ -388,7 +386,7 @@ class Kfac():
     target_delta = lr0*target_slope    # todo: get rid of target_deltas?
     actual_delta = loss1 - loss0
     actual_slope = actual_delta/lr0
-    slope_ratio = actual_delta/target_slope  # between 0 and 1.01
+    slope_ratio = actual_slope/target_slope  # between 0 and 1.01
 
     s.record('loss', loss0)
     s.record('step_length', lr0)
