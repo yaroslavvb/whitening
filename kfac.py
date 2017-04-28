@@ -1,9 +1,14 @@
+no_whitening = True
+
+prefix="kfac1"
+
+import sys
 import numpy as np
 import tensorflow as tf
 from collections import OrderedDict
 from collections import defaultdict
 
-dsize = 1000
+dsize = 10000
 dtype = np.float32
 eps = np.finfo(dtype).eps # 1e-7 or 1e-16
 one = tf.ones((), dtype=dtype)
@@ -25,7 +30,9 @@ class Model:
     self.initialize_global_vars = None # initialize global variables (variables
                                 # shared across all instances of model)
     self.extra = {}             # extra data
-    
+
+
+# todo: rename to IndexedGrad (since using param, grad in names)
 class Grads:
   """Gradients with caching.
 
@@ -52,7 +59,7 @@ class Grads:
     self.cached = []
     self.live = []
     update_ops = []
-    for grad,var in zip(grads, vars_):
+    for grad, var in zip(grads, vars_):
       self.live.append(grad)
       cached = tf.Variable(grad, var.name+"_grad_cached")
       self.cached.append(cached)
@@ -61,6 +68,9 @@ class Grads:
     self.update_op = tf.group(*update_ops)
     self.f = u.flatten(self.cached)
 
+  def cached_grads(self):
+    return VarGroup(self.grads_dict.values())
+  
   def update(self):
     sess = tf.get_default_session()
     sess.run(self.update_op)
@@ -93,12 +103,13 @@ class VarGroup:
     for v in vars_:
       assert isinstance(v, tf.Variable)
     self.vars_ = vars_
+    self.f = u.flatten(vars_)
     
   def copy(self):
     """Create a copy of given VarGroup. New vars_ depend on existing vars for
     initialization."""
     
-    var_copies = [tf.Variable(var, name=var.op.name+"_copy") for var in self.vars_]
+    var_copies = [tf.Variable(var.initialized_value, name=var.op.name+"_copy") for var in self.vars_]
     return VarGroup(var_copies)
   
   def assign(self, other):
@@ -114,13 +125,15 @@ class VarGroup:
 
   def sub(self, other, weight=one):
     """Returns an op that subtracts other from current vargroup."""
+    assert isinstance(other, VarGroup)
+    
     assert len(self) == len(other)
     ops = []
     if isinstance(weight, Var):
       weight = weight.var
       
     for (my_var, other_var) in zip(self.vars_, other.vars_):
-      ops.append(my_var - weight*other_var)
+      ops.append(my_var.assign_sub(weight*other_var))
     return tf.group(*ops)
 
   def __len__(self):
@@ -134,6 +147,7 @@ class Var:
 
   v = Var(tf.Variable())
   v.set(5)   # equivalent to sess.run(v.assign_op, feed_dict={pl: 5})
+  var.var    # returns underlying variable
   """
   def __init__(self, initial_value, name):
     self.var = tf.Variable(initial_value=initial_value, name=name)
@@ -167,9 +181,11 @@ class KfacCorrectionInfo():
 
 class Kfac():
   def __init__(self, model_creator):
-    kfac = self
-    s = self
+    kfac = self    # use for public members, ie, kfac.reset()
+    s = self       # use for private members, ie, s.some_internal_val
+
     s.model = model_creator(dsize)
+    s.log = defaultdict(lambda: [])
 
     # regular gradient
     s.grad = Grads(loss=s.model.loss, vars_=s.model.trainable_vars)
@@ -190,7 +206,12 @@ class Kfac():
       kfac[var].A = Covariance(A, var, "A")
       kfac[var].B2 = Covariance(B2, var, "B2")
 
-    s.grad_new = kfac.correct(s.grad)
+    s.grad_new = kfac.correct(s.grad)  # this is off by 2x when whitened
+    if no_whitening:
+      s.grad_new = s.grad
+
+    # norm and dot are off by factor of 2x, missing half of the tensor?
+    # todo: add tests to new grads class
     s.grad_dot_grad_new_op = tf.reduce_sum(s.grad.f * s.grad_new.f)
     s.grad_norm_op = u.L2(s.grad)
     s.grad_new_norm_op = u.L2(s.grad_new)
@@ -200,10 +221,11 @@ class Kfac():
     s.param_copy = s.param.copy()
     s.param_save_op = s.param_copy.assign(s.param)
     s.param_restore_op = s.param.assign(s.param_copy)
-    s.param_upate_op = s.param.sub(s.grad_new, weight=kfac.lr)
+    s.param_update_op = s.param.sub(s.grad_new.cached_grads(), weight=kfac.lr)
+    assert s.param.vars_ == s.grad_new.vars_
     
     s.step_counter = 0
-    s.session = tf.get_default_session()
+    s.sess = tf.get_default_session()
     
 
   # cheat for now and get those values from manual gradients
@@ -254,23 +276,32 @@ class Kfac():
     for var in kfac:
       ops.append(kfac[var].A.cov_update_op)
       ops.append(kfac[var].B2.cov_update_op)
-    sess.run(ops)
+    kfac.sess.run(ops)
 
     # update SVDs
+    if no_whitening:
+      return
+    
     for var in kfac:
       kfac[var].A.svd.update()
       kfac[var].B2.svd.update()
 
   def needs_correction(self, var):  # returns True if gradient of given var is
     # corrected
-    return True  # TODO: add registration to only correct some vars
-    
+    return False  # TODO: enable
+
+
+  # todo: rename to grad
   def correct(self, grads):
     """Accepts Grads object, produces corrected Grad."""
     kfac = self
 
     vars_ = []
     grads_new = []
+
+    # gradient must come from the model
+    assert grads.vars_ == self.model.trainable_vars
+    
     for var in grads:
       vars_.append(var)
       if kfac.needs_correction(var):
@@ -285,20 +316,32 @@ class Kfac():
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  
-        A = extract_A(grads, var)
-        B = extract_B(grads, var)
+        A = kfac.extract_A(grads, var)
+        B = kfac.extract_B(grads, var)
         dW = (B @ t(A)) / dsize # todo: remove this
         # dW should be the same as grad, TODO: test for this
-        grads_new.append(grad)
+        grads_new.append(grads[var])
 
     return Grads(grads=grads_new, vars_=vars_)
 
   def reset(self):
     # initialize all optimization related variables
-    self.lr.set(0.1)
+    self.lr.set(0.2)
     # TODO: initialize first layer activations here, and not everywhere else
-    self.model.initialize_local_vars()
-    self.model.initialize_global_vars()
+    #    self.model.initialize_local_vars()
+    #    self.model.initialize_global_vars()
+
+    # todo: refactor this into util.SvdWrapper
+    ops = []
+
+    for var in self.model.trainable_vars:
+      if self.needs_correction(var):
+        A_svd = kfac[var].A.svd
+        B2_svd = kfac[var].B2.svd 
+        ops.extend(A_svd.init_ops)
+        ops.extend(B2_svd.init_ops)
+    self.run(ops)
+
 
   def adaptive_step(self):
     """Performs a single KFAC step with adaptive learning rate."""
@@ -312,23 +355,35 @@ class Kfac():
     alpha=0.3         # acceptable fraction of predicted decrease
     beta=0.8          # how much to shrink when violation
     gamma=1.05  # how much to grow when too conservative
+    report_frequency = 1
+    
 
     kfac.model.advance_batch()
-    kfac.step_counter=+1
     kfac.update_stats()       # update cov matrices and svds
 
     kfac.grad.update()      # gradient (ptodo, already updated in stats)
     kfac.grad2.update()     # gradient from synth labels (don't need?)
     kfac.grad_new.update()  # corrected gradient
 
+    u.dump32(kfac.param.f, "%s_param_%d"%(prefix, s.step_counter))
+    myop = tf.reduce_sum(kfac.param.f*kfac.param.f*kfac.lr.var)
+    print("***", myop.eval())
+    u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, s.step_counter))
+    u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, s.step_counter))
+    
     # TODO: decide on kfac vs s.
-    kfac.run(kfac.params_save_op)   # TODO: insert lr somewhere
+    kfac.run(kfac.param_save_op)   # TODO: insert lr somewhere
     lr0, loss0 = s.run(kfac.lr, s.model.loss)
 
-    s.run(s.update_params_op)
-    loss1 = s.run(model.loss)
-
-    target_slope = -s.run(grad_dot_grad_new)
+    # u.dump32(s.param.f, "hi1")
+    # u.dump32(s.param.f, "hi2")
+    # u.dump32(s.grad_new.f, "hi3")
+    # sys.exit()
+    
+    s.run(s.param_update_op)
+    loss1 = s.run(s.model.loss)
+    
+    target_slope = -s.run(s.grad_dot_grad_new_op)
     target_delta = lr0*target_slope    # todo: get rid of target_deltas?
     actual_delta = loss1 - loss0
     actual_slope = actual_delta/lr0
@@ -336,16 +391,16 @@ class Kfac():
 
     s.record('loss', loss0)
     s.record('step_length', lr0)
-    s.record('grad_norm', s.run(grad_norm))
-    s.record('grad_new_norm', s.run(grad_new_norm))
+    s.record('grad_norm', s.run(s.grad_norm_op))
+    s.record('grad_new_norm', s.run(s.grad_new_norm_op))
     s.record('target_delta', target_delta)
 
     if actual_delta > 0:
       print('Observed increase in loss %.2f, rejecting step'%(actual_delta,))
-      s.run(restore_params_op)
+      s.run(s.param_restore_op)
 
-    if step % report_frequency == 0:
-      print('Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f'%(self.step_counter, loss0, target_delta, actual_delta, slope_ratio))
+    if s.step_counter % report_frequency == 0:
+      print('NStep %d loss %.2f, target decrease %.3f, actual decrease, %.6f ratio %.2f'%(self.step_counter, loss0, target_delta, actual_delta, slope_ratio))
 
     if (s.step_counter % down_adjustment_frequency == 0 and
         slope_ratio < alpha and abs(target_delta)>eps):
@@ -357,27 +412,38 @@ class Kfac():
       print('%.2f %.2f %.2f'%(loss0, loss1, slope_ratio))
       print('Growing learning rate to %.2f'%(lr0*gamma))
       s.lr.set(lr0*gamma)
+      
+    s.step_counter+=1
 
-    
+  def record(self, key, value):
+    #      self.log.setdefault(name, []).append(value)
+    self.log[key].append(value)
 
-  def record(name, value):
-      self.log.setdefault(name, []).append(value)
-
-  def set(variable, value):
+  def set(self, variable, value):
     s.run(variable.setter, feed_dict={variable.val_: value})
 
-  # TODO: allow to take multiple entries
-  def eval(thing):
-    if isinstance(thing, Var):
-      return s.run(thing.val)
-    else:
-      return s.run(thing)
-
-  def run(*ops):
+  def run(self, *ops):
     new_ops = []
     for op in ops:
-      if isinstance(op, VarInfo):
-        new_ops.append(op.val)
+      if isinstance(op, Var):
+        new_ops.append(op.var)
       else:
         new_ops.append(op)
-    return self.session.run(new_ops)
+    if len(new_ops) == 1:
+      return self.sess.run(new_ops[0])
+    return self.sess.run(new_ops)
+    
+
+def vargroup_test():
+  sess = tf.InteractiveSession()
+  v1 = tf.Variable(1.)
+  v2 = tf.Variable(1.)
+  a = VarGroup([v1, v2])
+  b = a.copy()
+  sess.run(tf.global_variables_initializer())
+  sess.run(a.sub(b, weight=1))
+  u.check_equal(v1.eval(), 0)
+
+if __name__=='__main__':
+  u.run_all_tests(sys.modules[__name__])
+

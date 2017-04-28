@@ -1,8 +1,11 @@
 dsize = 1000
 Lambda = 1e-3
 
+use_fixed_labels = True
 
-# Test mocked implementation of KFAC
+prefix="kfac1"
+
+# Test implementation of KFAC on MNIST
 import load_MNIST
 
 import util as u
@@ -15,9 +18,11 @@ from kfac import Kfac
 import tensorflow as tf
 import numpy as np
 
+# TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
-purely_relu = True     # convert sigmoids into ReLUs
+purely_relu = False     # convert sigmoids into ReLUs
 
+# TODO: get rid
 def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
   r = np.sqrt(6) / np.sqrt(s1 + s2 + 1)
   result = np.random.random(2*s2*s1)*2*r-r
@@ -26,13 +31,14 @@ def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
 
 def ng_init(rows, cols):
   # creates uniform initializer using Ng's formula
+  # TODO: turn into TF
   r = np.sqrt(6) / np.sqrt(rows + cols + 1)
   result = np.random.random(rows*cols)*2*r-r
   return result.reshape((rows, cols))
 
 
 def model_creator(batch_size, dtype=np.float32):
-  """Create MNIST autoencoder model."""
+  """Create MNIST autoencoder model. Dataset is part of model."""
   
   model = Model()
 
@@ -40,22 +46,17 @@ def model_creator(batch_size, dtype=np.float32):
   init_dict = {}   # todo: rename to feed_dict?
   global_vars = []
   local_vars = []
+  
   # TODO: rename to make_var
   def init_var(val, name, is_global=False):
     """Helper to create variables with numpy or TF initial values."""
     if isinstance(val, tf.Tensor):
-      if is_global:
-        var = tf.get_variable(name=name, initializer=val)
-      else:
-        var = tf.Variable(val, name=name)
+      var = u.get_variable(name=name, initializer=val, reuse=is_global)
     else:
       val = np.array(val)
       assert u.is_numeric(val), "Unknown type"
       holder = tf.placeholder(dtype, shape=val.shape, name=name+"_holder")
-      if is_global:
-        var = tf.get_variable(name=name, initializer=holder)
-      else:
-        var = tf.Variable(holder, name=name)
+      var = u.get_variable(name=name, initializer=holder, reuse=is_global)
       init_dict[holder] = val
 
     if is_global:
@@ -89,22 +90,31 @@ def model_creator(batch_size, dtype=np.float32):
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
 
-  X = init_var(patches, "X")
+  X = init_var(patches, "X", is_global=False)
   W = [None]*n
   W.insert(0, X)
   A = [None]*(n+2)
   A[1] = W[0]
+  W0f_old = W_uniform(fs[2],fs[3]).astype(np.float32) # to match previous generation
+  W0s_old = u.unflatten(W0f_old, fs[1:])   # perftodo: this creates transposes
   for i in range(1, n+1):
-    W[i] = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
+    #    W[i] = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
+    W[i] = init_var(W0s_old[i-1], "W_%d"%(i,), is_global=True)
     A[i+1] = nonlin(W[i] @ A[i])
     
   err = A[n+1] - A[1]
 
+  # manually compute backprop to use for sanity checking
   B = [None]*(n+1)
   B2 = [None]*(n+1)
   B[n] = err*d_nonlin(A[n+1])
   _sampled_labels_live = tf.random_normal((f(n), f(-1)), dtype=dtype, seed=0)
-  _sampled_labels = init_var(_sampled_labels_live, "to_be_deleted")
+  if use_fixed_labels:
+    _sampled_labels_live = tf.ones(shape=(f(n), f(-1)), dtype=dtype)
+    
+  _sampled_labels = init_var(_sampled_labels_live, "to_be_deleted",
+                             is_global=False)
+
   B2[n] = _sampled_labels*d_nonlin(A[n+1])
   for i in range(n-1, -1, -1):
     backprop = t(W[i+1]) @ B[i+1]
@@ -119,8 +129,8 @@ def model_creator(batch_size, dtype=np.float32):
   dW = [None]*(n+1)
   pre_dW = [None]*(n+1)   # preconditioned dW
   for i in range(1,n+1):
-    cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
-    cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
+    cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,), is_global=False)
+    cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,), is_global=False)
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     whitened_A = u.regularized_inverse2(vars_svd_A[i],L=Lambda) @ A[i]
@@ -142,13 +152,14 @@ def model_creator(batch_size, dtype=np.float32):
   model.loss = u.L2(err) / (2 * dsize)
   sampled_labels_live = A[n+1] + tf.random_normal((f(n), f(-1)),
                                                   dtype=dtype, seed=0)
-  sampled_labels = init_var(sampled_labels_live, "sampled_labels")
+  if use_fixed_labels:
+    sampled_labels_live = tf.ones(shape=(f(n), f(-1)), dtype=dtype)
+  sampled_labels = init_var(sampled_labels_live, "sampled_labels", is_global=False)
   err2 = A[n+1] - sampled_labels
   model.loss2 = u.L2(err2) / (2 * dsize)
   model.global_vars = global_vars
-  assert global_vars == W[1:]
-  model.trainable_vars = model.global_vars  # TODO: make them different?
   model.local_vars = local_vars
+  model.trainable_vars = W[1:]
 
   def advance_batch():
     sess = tf.get_default_session()
@@ -174,19 +185,37 @@ def model_creator(batch_size, dtype=np.float32):
   return model
 
 if __name__ == '__main__':
-  # TODO: figure out the scopes
-  with tf.variable_scope("kfac", reuse=None):
-    model = model_creator(dsize) # TODO: share dataset between models?
-    tf.get_variable_scope().reuse_variables()
-    kfac = Kfac(model_creator)
-
-  sess = tf.InteractiveSession()
-  model.initialize_global_vars()
-  model.initialize_local_vars() 
+  np.random.seed(0)
+  tf.set_random_seed(0)
   
-  kfac.reset()    # resets optimization
-  for i in range(100):
+  sess = tf.InteractiveSession()
+#  model = model_creator(dsize) # TODO: share dataset between models?
+  kfac = Kfac(model_creator)   # creates another copy of model, initializes
+                               # local variables
+
+  kfac.model.initialize_global_vars()
+  kfac.model.initialize_local_vars()
+  print("Loss0 %.2f"%(kfac.model.loss.eval()))
+  kfac.reset()    # resets optimization variables (not model variables)
+
+  #  Step 0 loss 92.84, target decrease -80.502, actual decrease, -52.891 ratio 0.66 grad norm: 402.51 pregrad norm: 402.51
+  # NStep 0 loss 92.84, target decrease -80.502, actual decrease, -0.880 ratio 0.00 92.84 91.96 0.00
+
+  # old:  Step 0 loss 92.84, target decrease -80.502, actual decrease, -52.891 ratio 0.66 grad norm: 402.51 pregrad norm: 402.51
+#  new:   Step 1 loss 92.84, target decrease -87.571, actual decrease, -0.467 ratio 0.00
+
+# Need:
+#  Step 0 loss 92.84, target decrease -402.508, actual decrease, -63.343 ratio 0.16 grad norm: 402.51 pregrad norm: 402.51
+# Get:
+# NStep 0 loss 92.84, target decrease -80.502, actual decrease, -2.161827 ratio 0.01
+
+  
+  print("Loss %.2f"%(kfac.model.loss.eval()))
+  for i in range(3):
+    print("Loss %.2f"%(kfac.model.loss.eval()))
     kfac.adaptive_step()
-    print("Loss %.2f"%(model.loss.eval()))
+    #u.dump32(kfac.param.f, "%s_param_%d"%(prefix, i))
+    #    u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, i))
+    #    u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, i))
   
   pass
