@@ -24,7 +24,7 @@ whitening_mode = 0                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 1               # how often to print loss
 
-num_steps = 3
+num_steps = 5
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = False  # convert sigmoids into linear nonlinearities
@@ -107,8 +107,6 @@ if __name__=='__main__':
     return var
 
   lr = init_var(0.2, "lr")
-  # refactorhack
-  lr = init_var(1., "lr")
   if purely_linear:   # need lower LR without sigmoids
     lr = init_var(.02, "lr")
     
@@ -430,6 +428,7 @@ if __name__=='__main__':
                                                lr0*growth_rate})
 
     u.record_time()
+  u.dump(losses, prefix+"_losses.csv")
 
   print("Test passed")
 

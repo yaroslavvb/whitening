@@ -1,4 +1,5 @@
 no_whitening = True
+adaptive_step = False     # adjust step length based on predicted decrease
 
 prefix="kfac1"
 
@@ -402,7 +403,7 @@ class Kfac():
     if s.step_counter % report_frequency == 0:
       print('NStep %d loss %.2f, target decrease %.3f, actual decrease, %.6f ratio %.2f'%(self.step_counter, loss0, target_delta, actual_delta, slope_ratio))
 
-    if (s.step_counter % down_adjustment_frequency == 0 and
+    if (adaptive_step and s.step_counter % down_adjustment_frequency == 0 and
         slope_ratio < alpha and abs(target_delta)>eps):
       print('%.2f %.2f %.2f'%(loss0, loss1, slope_ratio))
       print('Slope optimality %.2f, shrinking learning rate to %.2f'%(slope_ratio, lr0*beta,))

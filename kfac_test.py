@@ -1,6 +1,6 @@
 dsize = 1000
 Lambda = 1e-3
-
+num_steps = 5
 use_fixed_labels = True
 
 prefix="kfac1"
@@ -210,12 +210,15 @@ if __name__ == '__main__':
 # NStep 0 loss 92.84, target decrease -80.502, actual decrease, -2.161827 ratio 0.01
 
   
-  print("Loss %.2f"%(kfac.model.loss.eval()))
-  for i in range(3):
+  losses = []
+  for i in range(num_steps):
     print("Loss %.2f"%(kfac.model.loss.eval()))
+    losses.append(kfac.model.loss.eval())
     kfac.adaptive_step()
     #u.dump32(kfac.param.f, "%s_param_%d"%(prefix, i))
     #    u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, i))
     #    u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, i))
-  
-  pass
+
+  targets = np.loadtxt("data/kfac_refactor_test1_losses.csv", delimiter=",")
+  print(np.linalg.norm(np.asarray(losses)-targets))
+  u.check_equal(losses, targets)
