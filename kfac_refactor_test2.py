@@ -9,7 +9,7 @@ use_fixed_labels = True
 # "x0" means numpy
 # _live means it's used to update a variable value
 # experiment prefixes
-prefix = "kfac_refactor_test1"
+prefix = "kfac_refactor_test2"
 
 import util
 import util as u
@@ -20,14 +20,14 @@ use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
 
 import sys
-whitening_mode = 0                 # 0 for gradient, 4 for full whitening
+whitening_mode = 1                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 1               # how often to print loss
 
 num_steps = 5
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
-purely_linear = False  # convert sigmoids into linear nonlinearities
+purely_linear = True  # convert sigmoids into linear nonlinearities
 use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
 if whitening_mode == 0:
@@ -106,9 +106,7 @@ if __name__=='__main__':
     vard[var] = u.VarInfo(var_setter, var_p)
     return var
 
-  lr = init_var(0.2, "lr")
-  if purely_linear:   # need lower LR without sigmoids
-    lr = init_var(.02, "lr")
+  lr = init_var(0.02, "lr")
     
   Wf = init_var(W0f, "Wf", True)
   Wf_copy = init_var(W0f, "Wf_copy", True)
@@ -183,11 +181,11 @@ if __name__=='__main__':
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     if use_tikhonov:
-      whitened_A = u.regularized_inverse2(vars_svd_A[i],L=Lambda) @ A[i]
+      whitened_A = u.regularized_inverse3(vars_svd_A[i],L=Lambda) @ A[i]
     else:
       whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
     if use_tikhonov:
-      whitened_B2 = u.regularized_inverse2(vars_svd_B2[i],L=Lambda) @ B[i]
+      whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=Lambda) @ B[i]
     else:
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
     whitened_A_stable = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
@@ -358,6 +356,7 @@ if __name__=='__main__':
     util.dump32(Wf_copy, "%s_param_%d"%(prefix, step))
     util.dump32(grad, "%s_grad_%d"%(prefix, step))
     util.dump32(pre_grad, "%s_pre_grad_%d"%(prefix, step))
+    #    util.dump32(A[1], "%s_param_%d"%(prefix, step))
 
 
     # regular inverse becomes unstable when grad norm exceeds 1
@@ -428,7 +427,9 @@ if __name__=='__main__':
                                                lr0*growth_rate})
 
     u.record_time()
-  u.dump(losses, prefix+"_losses.csv")
-
+#  u.dump(losses, prefix+"_losses.csv")
+  targets = np.loadtxt("data/kfac_refactor_test2_losses.csv", delimiter=",")
+  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
+  u.check_equal(losses, targets)
   print("Test passed")
 

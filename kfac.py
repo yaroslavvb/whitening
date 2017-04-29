@@ -1,7 +1,8 @@
+dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
-whitening_mode = 0
+whitening_mode = 1
 
-prefix="kfac1"
+prefix="kfac2"
 
 import sys
 import numpy as np
@@ -9,7 +10,6 @@ import tensorflow as tf
 from collections import OrderedDict
 from collections import defaultdict
 
-dsize = 10000
 dtype = np.float32
 eps = np.finfo(dtype).eps # 1e-7 or 1e-16
 one = tf.ones((), dtype=dtype)
@@ -195,23 +195,29 @@ class Kfac():
     s.grad2 = Grads(loss=s.model.loss2, vars_=s.model.trainable_vars)
 
     s.lr = Var(0.2, "lr")
+    self.grads1 = []
+    self.grads2 = []
+    self.grads3 = []
     
     # create covariance and SVD ops for all correctable ops, store them here
-    s.kfac_correction_dict = defaultdict(lambda: KfacCorrectionInfo())
+    s.kfac_correction_dict = OrderedDict()
     
     for var in s.model.trainable_vars:
       if not s.needs_correction(var):
         continue
       A = kfac.extract_A(s.grad2, var)
       B2 = kfac.extract_B2(s.grad2, var)  # todo: change to extract_B
+      kfac.register_correction(var)
       kfac[var].A = Covariance(A, var, "A")
       kfac[var].B2 = Covariance(B2, var, "B2")
 
-    s.grad_new = kfac.correct(s.grad)  # this is off by 2x when whitened
+    s.grad_new = kfac.correct(s.grad)
+    #s.grad_new = s.grad
 
     # norm and dot are off by factor of 2x, missing half of the tensor?
     # todo: add tests to new grads class
     s.grad_dot_grad_new_op = tf.reduce_sum(s.grad.f * s.grad_new.f)
+    s.grad_dot_grad_op = tf.reduce_sum(s.grad.f * s.grad.f)
     s.grad_norm_op = u.L2(s.grad)
     s.grad_new_norm_op = u.L2(s.grad_new)
 
@@ -227,14 +233,29 @@ class Kfac():
     s.sess = tf.get_default_session()
     
 
+  def register_correction(self, var):
+    self.kfac_correction_dict[var] = KfacCorrectionInfo()
+    
   # cheat for now and get those values from manual gradients
   def extract_A(self, grad, var):
     i = self.model.extra['W'].index(var)
+    print("Extracting A for %s, got %d, %s" %(var.op.name, i, self.model.extra['A'][i]))
     return self.model.extra['A'][i]
 
   def extract_B(self, grad, var):
     i = self.model.extra['W'].index(var)
+    print("Extracting B for %s, got %d, %s" %(var.op.name, i, self.model.extra['B'][i]))
     return self.model.extra['B'][i]
+
+  def extract_dW(self, grad, var):
+    i = self.model.extra['W'].index(var)
+    print("Extracting dW for %s, got %d, %s" %(var.op.name, i, self.model.extra['B'][i]))
+    return self.model.extra['dW'][i]
+
+  def extract_dW2(self, grad, var):
+    i = self.model.extra['W'].index(var)
+    print("Extracting dW2 for %s, got %d, %s" %(var.op.name, i, self.model.extra['B'][i]))
+    return self.model.extra['dW2'][i]
 
   def extract_B2(self, grad, var):
     i = self.model.extra['W'].index(var)
@@ -278,16 +299,26 @@ class Kfac():
     kfac.sess.run(ops)
 
     # update SVDs
+    corrected_vars = list(kfac)
     if whitening_mode == 0:
       return
-    
-    for var in kfac:
-      kfac[var].A.svd.update()
-      kfac[var].B2.svd.update()
+    elif whitening_mode == 1:
+      vv = corrected_vars[0]
+      assert(vv.op.name=='W_1')
+      kfac[vv].A.svd.update()
+    else:
+      for var in kfac:
+        kfac[var].A.svd.update()
+        kfac[var].B2.svd.update()
 
   def needs_correction(self, var):  # returns True if gradient of given var is
-    # corrected
-    return False  # TODO: enable
+    return True
+    assert len(self.model.trainable_vars) == 2
+    if var in self.model.trainable_vars:
+      return True
+    else:
+      print("returning false for ", var)
+      return False  # (don't correct the input tensor)
 
 
   # todo: rename to grad
@@ -309,23 +340,46 @@ class Kfac():
         B2_svd = kfac[var].B2.svd 
         A = kfac.extract_A(grads, var)    # extract activations
         B = kfac.extract_B(grads, var)    # extract backprops
-        A_new = u.regularized_inverse2(A_svd) @ A
-        B_new = u.regularized_inverse2(B2_svd) @ B
+        A_new = u.regularized_inverse3(A_svd) @ A
+        B_new = u.regularized_inverse3(B2_svd) @ B
         dW = (B @ t(A)) / dsize # TODO: don't need this
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  
         A = kfac.extract_A(grads, var)
         B = kfac.extract_B(grads, var)
-        dW = (B @ t(A)) / dsize # todo: remove this
+        #dW = (B @ t(A)) / dsize # todo: remove this
         # dW should be the same as grad, TODO: test for this
-        grads_new.append(grads[var])
+        # dohack
+
+
+        dW1 = kfac.extract_dW(grads, var) # saved value
+        dW2 = B@t(A)/dsize      # computed from saved B's
+        dW3 = grads[var]        # automatically computed on new model
+        dW4 = kfac.extract_dW2(grads, var) # saved value
+
+        self.grads1.append(dW1)
+        self.grads2.append(dW2)
+        self.grads3.append(dW3)
+
+        #        grads_new.append(dW1)    # from model extra works
+        grads_new.append(dW2)    # from model extra doesn't work
+        # grads_new.append(dW3)     # from autograd works
+        #grads_new.append(dW4/dsize)
+        
+        #        grads_new.append(grads[var])
+        #op = grads[var]
+        #assert op.op_def.name == 'MatMul'
+        #assert op.get_attr("transpose_a") == True
+        #assert op.get_attr("transpose_b") == False
+        #        print(grads[var].op.
+
 
     return Grads(grads=grads_new, vars_=vars_)
 
   def reset(self):
+    kfac = self
     # initialize all optimization related variables
-    self.lr.set(0.2)
     # TODO: initialize first layer activations here, and not everywhere else
     #    self.model.initialize_local_vars()
     #    self.model.initialize_global_vars()
@@ -365,10 +419,11 @@ class Kfac():
     kfac.grad_new.update()  # corrected gradient
 
     u.dump32(kfac.param.f, "%s_param_%d"%(prefix, s.step_counter))
-    myop = tf.reduce_sum(kfac.param.f*kfac.param.f*kfac.lr.var)
-    print("***", myop.eval())
-    u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, s.step_counter))
-    u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, s.step_counter))
+    #myop = tf.reduce_sum(kfac.param.f*kfac.param.f*kfac.lr.var)
+    #u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, s.step_counter))
+    #u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, s.step_counter))
+
+    
     
     # TODO: decide on kfac vs s.
     kfac.run(kfac.param_save_op)   # TODO: insert lr somewhere
@@ -383,11 +438,13 @@ class Kfac():
     loss1 = s.run(s.model.loss)
     
     target_slope = -s.run(s.grad_dot_grad_new_op)
+    #    target_slope = -s.run(s.grad_dot_grad_op)
     target_delta = lr0*target_slope    # todo: get rid of target_deltas?
     actual_delta = loss1 - loss0
     actual_slope = actual_delta/lr0
     slope_ratio = actual_slope/target_slope  # between 0 and 1.01
-
+    #    import pdb; pdb.set_trace()
+    
     s.record('loss', loss0)
     s.record('step_length', lr0)
     s.record('grad_norm', s.run(s.grad_norm_op))
@@ -399,7 +456,7 @@ class Kfac():
       s.run(s.param_restore_op)
 
     if s.step_counter % report_frequency == 0:
-      print('NStep %d loss %.2f, target decrease %.3f, actual decrease, %.6f ratio %.2f'%(self.step_counter, loss0, target_delta, actual_delta, slope_ratio))
+      print('NStep %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f'%(self.step_counter, loss0, target_delta, actual_delta, slope_ratio))
 
     if (adaptive_step and s.step_counter % down_adjustment_frequency == 0 and
         slope_ratio < alpha and abs(target_delta)>eps):

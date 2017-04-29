@@ -1,4 +1,3 @@
-dsize = 1000
 Lambda = 1e-3
 num_steps = 5
 use_fixed_labels = True
@@ -14,12 +13,14 @@ from util import t  # transpose
 
 from kfac import Model
 from kfac import Kfac
+import kfac
+dsize = kfac.dsize
 
 import tensorflow as tf
 import numpy as np
 
 # TODO: get rid of this
-purely_linear = False  # convert sigmoids into linear nonlinearities
+purely_linear = True  # convert sigmoids into linear nonlinearities
 purely_relu = False     # convert sigmoids into ReLUs
 
 # TODO: get rid
@@ -127,15 +128,17 @@ def model_creator(batch_size, dtype=np.float32):
   vars_svd_A = [None]*(n+1)
   vars_svd_B2 = [None]*(n+1)
   dW = [None]*(n+1)
+  dW2 = [None]*(n+1)
   pre_dW = [None]*(n+1)   # preconditioned dW
   for i in range(1,n+1):
     cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,), is_global=False)
     cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,), is_global=False)
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
-    whitened_A = u.regularized_inverse2(vars_svd_A[i],L=Lambda) @ A[i]
-    whitened_B2 = u.regularized_inverse2(vars_svd_B2[i],L=Lambda) @ B[i]
+    whitened_A = u.regularized_inverse3(vars_svd_A[i],L=Lambda) @ A[i]
+    whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=Lambda) @ B[i]
     dW[i] = (B[i] @ t(A[i]))/dsize
+    dW2[i] = B[i] @ t(A[i])
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
 
   model.extra['A'] = A
@@ -147,6 +150,7 @@ def model_creator(batch_size, dtype=np.float32):
   model.extra['vars_svd_B2'] = vars_svd_B2
   model.extra['W'] = W
   model.extra['dW'] = dW
+  model.extra['dW2'] = dW2
   model.extra['pre_dW'] = pre_dW
     
   model.loss = u.L2(err) / (2 * dsize)
@@ -195,8 +199,9 @@ if __name__ == '__main__':
 
   kfac.model.initialize_global_vars()
   kfac.model.initialize_local_vars()
-  print("Loss0 %.2f"%(kfac.model.loss.eval()))
+  #  print("Loss0 %.2f"%(kfac.model.loss.eval()))
   kfac.reset()    # resets optimization variables (not model variables)
+  kfac.lr.set(0.02)
 
   #  Step 0 loss 92.84, target decrease -80.502, actual decrease, -52.891 ratio 0.66 grad norm: 402.51 pregrad norm: 402.51
   # NStep 0 loss 92.84, target decrease -80.502, actual decrease, -0.880 ratio 0.00 92.84 91.96 0.00
@@ -212,13 +217,15 @@ if __name__ == '__main__':
   
   losses = []
   for i in range(num_steps):
-    print("Loss %.2f"%(kfac.model.loss.eval()))
+    #    print("Loss %.2f"%(kfac.model.loss.eval()))
     losses.append(kfac.model.loss.eval())
     kfac.adaptive_step()
     #u.dump32(kfac.param.f, "%s_param_%d"%(prefix, i))
     #    u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, i))
     #    u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, i))
 
-  targets = np.loadtxt("data/kfac_refactor_test1_losses.csv", delimiter=",")
-  print(np.linalg.norm(np.asarray(losses)-targets))
+  targets = np.loadtxt("data/kfac_refactor_test2_losses.csv", delimiter=",")
+  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
   u.check_equal(losses, targets)
+  print("Test passed")
+  
