@@ -226,6 +226,6 @@ if __name__ == '__main__':
 
   targets = np.loadtxt("data/kfac_refactor_test2_losses.csv", delimiter=",")
   print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-  u.check_equal(losses, targets)
+  u.check_equal(losses, targets, rtol=1e-5)
   print("Test passed")
   
