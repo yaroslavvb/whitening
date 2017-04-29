@@ -22,24 +22,28 @@ from util import t  # transpose
 class Model:
   def __init__(self):
     self.loss = None            # loss
-    self.loss2 = None           # loss WRT synthetic labels
+    self.loss2 = None           # loss wrt synthetic labels
     self.advance_batch = None   # function that advances batch
-    self.global_vars = []       # all local variables of the model
-    self.local_vars = []        # all global variables of the model
-    self.trainable_vars = []    # all trainable vars (same as global_vars)
+    self.global_vars = []       # all global variables of the model
+    self.local_vars = []        # all local variables of the model
+    self.trainable_vars = []    # trainable vars
     self.initialize_local_vars = None  # initialize local variables
     self.initialize_global_vars = None # initialize global variables (variables
                                 # shared across all instances of model)
     self.extra = {}             # extra data
 
 
-# todo: rename to IndexedGrad (since using param, grad in names)
-class Grads:
-  """Gradients with caching.
+class IndexedGrad:
+  """Dictionary-like object representing a set of cached gradients indexed by
+  variables wrt to which the grad was taken. Values of gradient are stored in
+  variables and must be explictly updated using "update" method.
 
-  g = Grads(vars_=vars_, grads=grads)  # create from existing grad tensors
-  g = Grads(loss=loss, vars_=vars_)    # use tf.gradients to get grad tenors
-  g.f                          # cached grads as a vector
+  Implements Python dictionary interface delegating to underlying
+  {var: cached_grad} dict
+
+  g = IndexedGrad(vars_=vars_, grads=grads)  # create from existing grad tensors
+  g = IndexedGrad(loss=loss, vars_=vars_) # use tf.gradients to get grad tensors
+  g.f                          # concated vector version of all cached grads
   g.update()                   # updates cached value of grads
   g.live                       # live version of gradients [tensor1,tensor2...
   g.cached                     # cached version of grads [var1,var2...
@@ -47,7 +51,6 @@ class Grads:
   """
   
   def __init__(self, *forbidden, grads=None, vars_=None, loss=None):
-
     assert len(forbidden) == 0  # force params to be keyword-only
     
     assert vars_ is not None
@@ -68,11 +71,12 @@ class Grads:
       update_ops.append(cached.initializer)
     self.update_op = tf.group(*update_ops)
     self.f = u.flatten(self.cached)
-
-  def cached_grads(self):
-    return VarGroup(self.grads_dict.values())
+    self.cached = VarList(self.cached)
+    assert list(self.cached) == list(self.grads_dict.values())
   
   def update(self):
+    """Upgrade cached gradients using from their live values using
+    default session."""
     sess = tf.get_default_session()
     sess.run(self.update_op)
 
@@ -91,42 +95,53 @@ class Grads:
   def __contains__(self, item):
     return self.grads_dict.__contains__(item)
 
-class VarGroup:
+class VarList:
   """Class to simplify dealing with groups of variables. Acts like a regular
-  TensorFlow variable, with helper methods to extract sub-components
+  TensorFlow variable, with helper methods to extract sub-components.
 
-  a = VarGroup([tf.Variable(),tf.Variable()])
-  b = a.copy()
+  Implements Python list interface delegating to underlying list of
+  variables.
+
+  a = VarList([tf.Variable(),tf.Variable()])
+  b = a.copy()            # new list of variables of same sizes
+  a.f                     # flattened representation of variable list
   sess.run(b.assign(a))
   """
 
-  def __init__(self, vars_):
+  def __init__(self, vars_, name=None):
     for v in vars_:
       assert isinstance(v, tf.Variable)
+    assert vars_
+    
     self.vars_ = vars_
     self.f = u.flatten(vars_)
-    
+    if name is None:  # take name from first variable
+      self.name = "VarList_"+vars_[0].op.name
+    else:
+      self.name = name
+      
   def copy(self):
-    """Create a copy of given VarGroup. New vars_ depend on existing vars for
+    """Create a copy of given VarList. New vars_ depend on existing vars for
     initialization."""
     
-    var_copies = [tf.Variable(var.initialized_value, name=var.op.name+"_copy") for var in self.vars_]
-    return VarGroup(var_copies)
+    var_copies = [tf.Variable(var.initialized_value, name=var.op.name+"_copy")
+                  for var in self.vars_]
+    return VarList(var_copies, name="copy_"+self.name)
   
   def assign(self, other):
-    """Creates group of assign ops that copies value of current vargroup to
-    other_vargroup."""
+    """Creates group of assign ops that copies value of current VarList to
+    other VarList."""
 
-    assert isinstance(other, VarGroup)
+    assert isinstance(other, VarList)
     assert len(self) == len(other)
     ops = []
     for (my_var, other_var) in zip(self.vars_, other.vars_):
       ops.append(my_var.assign(other_var))
-    return tf.group(*ops)
+    return tf.group(*ops, name="assign_"+self.name)
 
   def sub(self, other, weight=one):
-    """Returns an op that subtracts other from current vargroup."""
-    assert isinstance(other, VarGroup)
+    """Returns an op that subtracts other from current VarList."""
+    assert isinstance(other, VarList)
     
     assert len(self) == len(other)
     ops = []
@@ -135,16 +150,18 @@ class VarGroup:
       
     for (my_var, other_var) in zip(self.vars_, other.vars_):
       ops.append(my_var.assign_sub(weight*other_var))
-    return tf.group(*ops)
+    return tf.group(*ops, name="sub_"+self.name)
 
+  def __iter__(self):
+    return self.vars_.__iter__()
   def __len__(self):
-    return len(self.vars_)
+    return self.vars_.__len__()
 
 # TODO: refactor to behave more like variable
 # TODO: inherit from Variable?
 class Var:
-  """Like TensorFlow Variable, but keeps track of placeholder and assign op
-  so that assigning from numpy is easier.
+  """Convenience structure to keep track of variable, it's assign op
+  and assignment placeholder together.
 
   v = Var(tf.Variable())
   v.set(5)   # equivalent to sess.run(v.assign_op, feed_dict={pl: 5})
@@ -161,12 +178,15 @@ class Var:
 
 
 class Covariance():
-  """Covariance of data tensor as well as decomposition of the covariance."""
+  """Convenience structure to keep covariance of data tensor as well
+  as decomposition of this covariance.
+  """
+  
   def __init__(self, data, var, prefix):
     cov_op = data @ t(data) / dsize
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
-    # TODO: use get_variable for cov reuse. 
+    # TODO: use u.get_variable for cov reuse. 
     #    self.cov = tf.get_variable(name=cov_name, initializer=cov_op)
     self.cov = tf.Variable(name=cov_name, initial_value=cov_op)
     self.svd = u.SvdWrapper(target=self.cov, name=svd_name)
@@ -181,55 +201,49 @@ class KfacCorrectionInfo():
     
 
 class Kfac():
+  """Singleton class controlling gradient correction."""
+  
+  # TODO: assert singletonness
   def __init__(self, model_creator):
-    kfac = self    # use for public members, ie, kfac.reset()
     s = self       # use for private members, ie, s.some_internal_val
 
     s.model = model_creator(dsize)
-    s.log = defaultdict(lambda: [])
+    s.log = OrderedDict()
 
     # regular gradient
-    s.grad = Grads(loss=s.model.loss, vars_=s.model.trainable_vars)
+    s.grad = IndexedGrad(loss=s.model.loss, vars_=s.model.trainable_vars)
     
     # gradient with synthetic backprops
-    s.grad2 = Grads(loss=s.model.loss2, vars_=s.model.trainable_vars)
+    s.grad2 = IndexedGrad(loss=s.model.loss2, vars_=s.model.trainable_vars)
 
-    s.lr = Var(0.2, "lr")
-    self.grads1 = []
-    self.grads2 = []
-    self.grads3 = []
+    s.lr = Var(-np.inf, "lr")
     
-    # create covariance and SVD ops for all correctable ops, store them here
+    # covariance and SVD ops for all correctable ops, mapped to parameter
+    # variable to correct
     s.kfac_correction_dict = OrderedDict()
     
     for var in s.model.trainable_vars:
       if not s.needs_correction(var):
         continue
-      A = kfac.extract_A(s.grad2, var)
-      B2 = kfac.extract_B2(s.grad2, var)  # todo: change to extract_B
-      kfac.register_correction(var)
-      kfac[var].A = Covariance(A, var, "A")
-      kfac[var].B2 = Covariance(B2, var, "B2")
+      A = s.extract_A(s.grad2, var)
+      B2 = s.extract_B2(s.grad2, var)  # todo: change to extract_B
+      s.register_correction(var)
+      s[var].A = Covariance(A, var, "A")
+      s[var].B2 = Covariance(B2, var, "B2")
 
-    s.grad_new = kfac.correct(s.grad)
-    #s.grad_new = s.grad
-
-    # norm and dot are off by factor of 2x, missing half of the tensor?
-    # todo: add tests to new grads class
+    s.grad_new = s.correct(s.grad)
     s.grad_dot_grad_new_op = tf.reduce_sum(s.grad.f * s.grad_new.f)
-    s.grad_dot_grad_op = tf.reduce_sum(s.grad.f * s.grad.f)
-    s.grad_norm_op = u.L2(s.grad)
-    s.grad_new_norm_op = u.L2(s.grad_new)
+    s.grad_norm_op = u.L2(s.grad.f)
+    s.grad_new_norm_op = u.L2(s.grad_new.f)
 
     # create parameter save and parameter restore ops
-    s.param = VarGroup(s.model.trainable_vars)
+    s.param = VarList(s.model.trainable_vars)
     s.param_copy = s.param.copy()
     s.param_save_op = s.param_copy.assign(s.param)
     s.param_restore_op = s.param.assign(s.param_copy)
-    s.param_update_op = s.param.sub(s.grad_new.cached_grads(), weight=kfac.lr)
+    s.param_update_op = s.param.sub(s.grad_new.cached, weight=s.lr)
     assert s.param.vars_ == s.grad_new.vars_
     
-    s.step_counter = 0
     s.sess = tf.get_default_session()
     
 
@@ -239,29 +253,21 @@ class Kfac():
   # cheat for now and get those values from manual gradients
   def extract_A(self, grad, var):
     i = self.model.extra['W'].index(var)
-    print("Extracting A for %s, got %d, %s" %(var.op.name, i, self.model.extra['A'][i]))
     return self.model.extra['A'][i]
 
   def extract_B(self, grad, var):
     i = self.model.extra['W'].index(var)
-    print("Extracting B for %s, got %d, %s" %(var.op.name, i, self.model.extra['B'][i]))
     return self.model.extra['B'][i]
 
   def extract_dW(self, grad, var):
     i = self.model.extra['W'].index(var)
-    print("Extracting dW for %s, got %d, %s" %(var.op.name, i, self.model.extra['B'][i]))
     return self.model.extra['dW'][i]
-
-  def extract_dW2(self, grad, var):
-    i = self.model.extra['W'].index(var)
-    print("Extracting dW2 for %s, got %d, %s" %(var.op.name, i, self.model.extra['B'][i]))
-    return self.model.extra['dW2'][i]
 
   def extract_B2(self, grad, var):
     i = self.model.extra['W'].index(var)
     return self.model.extra['B2'][i]
 
-  
+
    # https://docs.python.org/3/reference/datamodel.html?emulating-container-types#emulating-container-types
   def __len__(self):
     return self.kfac_correction_dict.__len__()
@@ -285,34 +291,33 @@ class Kfac():
   
   def update_stats(self):  # todo: split into separate stats/svd updates
     """Updates all covariance/SVD info of correctable factors."""
-    kfac = self
+    s = self
     ops = []
 
     # update covariances
-    kfac.model.advance_batch()
-    kfac.grad.update()   # TODO: not needed
-    kfac.grad2.update()
+    s.model.advance_batch()
+    s.grad.update()   # TODO: not needed
+    s.grad2.update()
     
-    for var in kfac:
-      ops.append(kfac[var].A.cov_update_op)
-      ops.append(kfac[var].B2.cov_update_op)
-    kfac.sess.run(ops)
+    for var in s:
+      ops.append(s[var].A.cov_update_op)
+      ops.append(s[var].B2.cov_update_op)
+    s.sess.run(ops)
 
     # update SVDs
-    corrected_vars = list(kfac)
+    corrected_vars = list(s)
     if whitening_mode == 0:
       return
     elif whitening_mode == 1:
       vv = corrected_vars[0]
       assert(vv.op.name=='W_1')
-      kfac[vv].A.svd.update()
+      s[vv].A.svd.update()
     else:
-      for var in kfac:
-        kfac[var].A.svd.update()
-        kfac[var].B2.svd.update()
+      for var in s:
+        s[var].A.svd.update()
+        s[var].B2.svd.update()
 
   def needs_correction(self, var):  # returns True if gradient of given var is
-    return True
     assert len(self.model.trainable_vars) == 2
     if var in self.model.trainable_vars:
       return True
@@ -321,64 +326,39 @@ class Kfac():
       return False  # (don't correct the input tensor)
 
 
-  # todo: rename to grad
-  def correct(self, grads):
-    """Accepts Grads object, produces corrected Grad."""
+  def correct(self, grad):
+    """Accepts IndexedGrad object, produces corrected version."""
     kfac = self
 
     vars_ = []
     grads_new = []
 
     # gradient must come from the model
-    assert grads.vars_ == self.model.trainable_vars
+    assert grad.vars_ == self.model.trainable_vars
     
-    for var in grads:
+    for var in grad:
       vars_.append(var)
       if kfac.needs_correction(var):
         # correct the gradient. Assume op is left matmul
         A_svd = kfac[var].A.svd
         B2_svd = kfac[var].B2.svd 
-        A = kfac.extract_A(grads, var)    # extract activations
-        B = kfac.extract_B(grads, var)    # extract backprops
+        A = kfac.extract_A(grad, var)    # extract activations
+        B = kfac.extract_B(grad, var)    # extract backprops
         A_new = u.regularized_inverse3(A_svd) @ A
         B_new = u.regularized_inverse3(B2_svd) @ B
-        dW = (B @ t(A)) / dsize # TODO: don't need this
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  
-        A = kfac.extract_A(grads, var)
-        B = kfac.extract_B(grads, var)
-        #dW = (B @ t(A)) / dsize # todo: remove this
-        # dW should be the same as grad, TODO: test for this
-        # dohack
+        A = kfac.extract_A(grad, var)
+        B = kfac.extract_B(grad, var)
+        dW = B@t(A)/dsize   
+        grads_new.append(dW)
 
-
-        dW1 = kfac.extract_dW(grads, var) # saved value
-        dW2 = B@t(A)/dsize      # computed from saved B's
-        dW3 = grads[var]        # automatically computed on new model
-        dW4 = kfac.extract_dW2(grads, var) # saved value
-
-        self.grads1.append(dW1)
-        self.grads2.append(dW2)
-        self.grads3.append(dW3)
-
-        #        grads_new.append(dW1)    # from model extra works
-        grads_new.append(dW2)    # from model extra doesn't work
-        # grads_new.append(dW3)     # from autograd works
-        #grads_new.append(dW4/dsize)
-        
-        #        grads_new.append(grads[var])
-        #op = grads[var]
-        #assert op.op_def.name == 'MatMul'
-        #assert op.get_attr("transpose_a") == True
-        #assert op.get_attr("transpose_b") == False
-        #        print(grads[var].op.
-
-
-    return Grads(grads=grads_new, vars_=vars_)
+    return IndexedGrad(grads=grads_new, vars_=vars_)
 
   def reset(self):
-    kfac = self
+    s = self
+    s.step_counter = 0
     # initialize all optimization related variables
     # TODO: initialize first layer activations here, and not everywhere else
     #    self.model.initialize_local_vars()
@@ -389,8 +369,8 @@ class Kfac():
 
     for var in self.model.trainable_vars:
       if self.needs_correction(var):
-        A_svd = kfac[var].A.svd
-        B2_svd = kfac[var].B2.svd 
+        A_svd = s[var].A.svd
+        B2_svd = s[var].B2.svd 
         ops.extend(A_svd.init_ops)
         ops.extend(B2_svd.init_ops)
     self.run(ops)
@@ -472,8 +452,7 @@ class Kfac():
     s.step_counter+=1
 
   def record(self, key, value):
-    #      self.log.setdefault(name, []).append(value)
-    self.log[key].append(value)
+    self.log.setdefault(key, []).append(value)
 
   def set(self, variable, value):
     s.run(variable.setter, feed_dict={variable.val_: value})
@@ -494,7 +473,7 @@ def vargroup_test():
   sess = tf.InteractiveSession()
   v1 = tf.Variable(1.)
   v2 = tf.Variable(1.)
-  a = VarGroup([v1, v2])
+  a = VarList([v1, v2])
   b = a.copy()
   sess.run(tf.global_variables_initializer())
   sess.run(a.sub(b, weight=1))
