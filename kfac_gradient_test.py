@@ -1,3 +1,4 @@
+do_gradient_test = True
 use_fixed_labels = True
 # refactored KFAC test
 # No whitening, sigmoid mnist
@@ -27,7 +28,7 @@ report_frequency = 1               # how often to print loss
 num_steps = 5
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
-purely_linear = True  # convert sigmoids into linear nonlinearities
+purely_linear = False  # convert sigmoids into linear nonlinearities
 use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
 if whitening_mode == 0:
@@ -49,7 +50,7 @@ import time
 
 import os, sys
 if use_gpu:
-  os.environ['CUDA_VISIBLE_DEVICES']='0'
+  os.environ['CUDA_VISIBLE_DEVICES']='5'
 else:
   os.environ['CUDA_VISIBLE_DEVICES']=''
 
@@ -68,6 +69,8 @@ if __name__=='__main__':
   tf.set_random_seed(0)
   
   dtype = np.float32
+  dtype_name = "float32"
+  eps = np.finfo(dtype).eps # 1e-7 or 1e-16
   # 64-bit doesn't help much, search for 64-bit in
   # https://www.wolframcloud.com/objects/5f297f41-30f7-4b1b-972c-cac8d1f8d8e4
   u.default_dtype = dtype
@@ -207,6 +210,8 @@ if __name__=='__main__':
   if not drop_sparsity:
     loss = loss + sparsity
 
+  autograds = tf.gradients(loss, W[1:])
+  autograds.insert(0, None)   # match in size with dW
   grad_live = u.flatten(dW[1:])
   pre_grad_live = u.flatten(pre_dW[1:]) # fisher preconditioned gradient
   pre_grad_stable_live = u.flatten(pre_dW_stable[1:]) # sqrt fisher preconditioned grad
@@ -352,12 +357,34 @@ if __name__=='__main__':
 
     sess.run(grad.initializer)
     sess.run(pre_grad.initializer)
+
+    def compare(a, b, msg):
+      infnorm = np.linalg.norm(a-b, np.inf)
+      l2norm = np.linalg.norm(a-b)
+      m = min(np.max(a), np.max(b))
+      print("Dtype %s, %s, l_inf %s, l2 %s"%(dtype_name, msg, infnorm/eps, l2norm/eps))
+      
+    assert len(autograds) == n+1
+    for i in range(1, n+1):
+      op = autograds[i].op
+      assert op.op_def.name == 'MatMul'
+      assert op.get_attr("transpose_a") == False
+      assert op.get_attr("transpose_b") == True
+      autoB = op.inputs[0]
+      autoA = op.inputs[1]
+      u.check_equal(op.inputs[1], A[i], rtol=1e-5, atol=1e-7)
+      u.check_equal(autograds[i], dW[i], rtol=1e-5, atol=1e-7)
+      u.check_equal(op.inputs[0], B[i]/dsize, rtol=1e-6, atol=1e-7)
+      compare(A[i].eval(), autoA.eval(), "A[%d]"%(i,))
+      compare((B[i]/dsize).eval(), autoB.eval(), "B[%d]"%(i,))
+      compare(dW[i].eval(), autograds[i].eval(), "dW[%d]"%(i,))
     
     lr0, loss0 = sess.run([lr, loss])
     save_params_op.run()
     util.dump32(Wf_copy, "%s_param_%d"%(prefix, step))
     util.dump32(grad, "%s_grad_%d"%(prefix, step))
     util.dump32(pre_grad, "%s_pre_grad_%d"%(prefix, step))
+
     #    util.dump32(A[1], "%s_param_%d"%(prefix, step))
 
 
