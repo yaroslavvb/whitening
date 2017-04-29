@@ -9,7 +9,8 @@ use_fixed_labels = True
 # "x0" means numpy
 # _live means it's used to update a variable value
 # experiment prefixes
-prefix = "kfac_refactor_test1"
+#prefix = "kfac_refactor_test1"
+prefix = "temp"
 
 import util
 import util as u
@@ -30,8 +31,6 @@ util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 purely_linear = False  # convert sigmoids into linear nonlinearities
 use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
-if whitening_mode == 0:
-  Lambda = 0          # lambda skews result for identity cov matrices
 
 # adaptive line search
 adaptive_step = False     # adjust step length based on predicted decrease
@@ -183,11 +182,11 @@ if __name__=='__main__':
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     if use_tikhonov:
-      whitened_A = u.regularized_inverse2(vars_svd_A[i],L=Lambda) @ A[i]
+      whitened_A = u.regularized_inverse3(vars_svd_A[i],L=Lambda) @ A[i]
     else:
       whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
     if use_tikhonov:
-      whitened_B2 = u.regularized_inverse2(vars_svd_B2[i],L=Lambda) @ B[i]
+      whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=Lambda) @ B[i]
     else:
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
     whitened_A_stable = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
@@ -428,7 +427,10 @@ if __name__=='__main__':
                                                lr0*growth_rate})
 
     u.record_time()
-  u.dump(losses, prefix+"_losses.csv")
+#  u.dump(losses, prefix+"_losses.csv")
+  targets = np.loadtxt("data/kfac_refactor_test1_losses.csv", delimiter=",")
+  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
+  u.check_equal(losses, targets)
 
   print("Test passed")
 

@@ -135,6 +135,7 @@ def pseudo_inverse_stable(svd, eps=1e-7):
 def regularized_inverse(mat, l=0.1):
   return tf.matrix_inverse(mat + l*Identity(int(mat.shape[0])))
 
+# TODO: this gives biased result when I use identity
 def regularized_inverse2(svd, L=1e-3):
   """Regularized inverse, working from SVD"""
   if svd.__class__.__name__=='SvdTuple' or svd.__class__.__name__=='SvdWrapper':
@@ -145,6 +146,18 @@ def regularized_inverse2(svd, L=1e-3):
   #  max_eigen = tf.Print(max_eigen, [max_eigen], "max_eigen")
   #si = 1/(s + L*tf.ones_like(s)/max_eigen)
   si = 1/(s+L*tf.ones_like(s))
+  return u @ tf.diag(si) @ tf.transpose(v)
+
+def regularized_inverse3(svd, L=1e-3):
+  """Unbiased version of regularized_inverse2"""
+  if svd.__class__.__name__=='SvdTuple' or svd.__class__.__name__=='SvdWrapper':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  else:
+    assert False, "Unknown type"
+  max_eigen = tf.reduce_max(s)
+  #  max_eigen = tf.Print(max_eigen, [max_eigen], "max_eigen")
+  #si = 1/(s + L*tf.ones_like(s)/max_eigen)
+  si = (1+L*tf.ones_like(s))/(s+L*tf.ones_like(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
 def pseudo_inverse_scipy(tensor):
@@ -593,15 +606,6 @@ def disable_shape_inference():
 def enable_shape_inference():
   ops.set_shapes_for_outputs = original_shape_func
 
-def run_all_tests(module):
-  all_functions = inspect.getmembers(module, inspect.isfunction)
-  for name,func in all_functions:
-    if name.endswith("_test"):
-      print("Testing "+name)
-      with timeit():
-        func()
-  print(module.__name__+" tests passed.")
-
 def dump(result, fname):
   """Save result to file."""
   result = result.eval() if hasattr(result, "eval") else result
@@ -621,6 +625,15 @@ def dump(result, fname):
     np.savetxt(location, result, delimiter=',')
   print(location)
 
+def dump32(result, fname):
+  """Efficient dumping of float32 vals"""
+  result = result.eval() if hasattr(result, "eval") else result
+  result = np.asarray(result)
+  location = os.getcwd()+"/data/"+fname
+  assert is_numeric(result)
+#  print(location)
+  return result.astype('float32').tofile(location)
+
 
 def frobenius_np(a):
   return np.sqrt(np.sum(np.square(a)))
@@ -633,6 +646,11 @@ def nan_check(result):
 
 def L2(t):
   """Squared L2 norm of t."""
+  if t.__class__.__name__=='Grads':
+    t = t.f
+  else:
+    assert (t.__class__.__name__ == 'Tensor' or
+            t.__class__.__name__.endswith('Variable'))
   return tf.reduce_sum(tf.square(t))
 
 class timeit:    
@@ -796,6 +814,30 @@ def intersept_op_creation(op_type_name_to_intercept):
       import pdb; pdb.set_trace()
     return(old_apply_op(obj, op_type_name, name=name, **keywords))
   op_def_library.OpDefLibrary.apply_op=my_apply_op
+
+
+global_variables = {}
+def get_variable(name, initializer, reuse):
+  """Lightweight replacement for tf.get_variable(). Doesn't need variable
+  scopes."""
+
+  global global_variables
+  if name in global_variables and reuse:
+    v = global_variables[name]
+  else:
+    v = tf.Variable(name=name, initial_value=initializer)
+    #    print("Creating new variable %s into %s" %(name, v.op.name))
+    global_variables[name] = v
+  return v
+  
+def run_all_tests(module):
+  all_functions = inspect.getmembers(module, inspect.isfunction)
+  for name,func in all_functions:
+    if name.endswith("_test"):
+      print("Testing "+name)
+      with timeit():
+        func()
+  print(module.__name__+" tests passed.")
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
