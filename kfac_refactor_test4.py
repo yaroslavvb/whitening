@@ -20,7 +20,7 @@ use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
 
 import sys
-whitening_mode = 2                 # 0 for gradient, 4 for full whitening
+whitening_mode = 1                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 1               # how often to print loss
 
