@@ -1,6 +1,12 @@
+LR=0.02
+LAMBDA=1e-3
+
 # Use lambda for small batch
-Lambda = 2*1e-1
-# Lambda = 1e-3
+#Lambda = 2*1e-1
+#Lambda = 1e-3
+#Lambda=1e8
+#Lambda = 10
+
 num_steps = 10
 use_fixed_labels = True
 
@@ -137,8 +143,8 @@ def model_creator(batch_size, dtype=np.float32):
     cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,), is_global=False)
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
-    whitened_A = u.regularized_inverse3(vars_svd_A[i],L=Lambda) @ A[i]
-    whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=Lambda) @ B[i]
+    whitened_A = u.regularized_inverse3(vars_svd_A[i],L=LAMBDA) @ A[i]
+    whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=LAMBDA) @ B[i]
     dW[i] = (B[i] @ t(A[i]))/dsize
     dW2[i] = B[i] @ t(A[i])
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
@@ -203,7 +209,8 @@ if __name__ == '__main__':
   kfac.model.initialize_local_vars()
   #  print("Loss0 %.2f"%(kfac.model.loss.eval()))
   kfac.reset()    # resets optimization variables (not model variables)
-  kfac.lr.set(0.02)
+  kfac.lr.set(LR)
+  kfac.Lambda.set(LAMBDA)
 
   #  Step 0 loss 92.84, target decrease -80.502, actual decrease, -52.891 ratio 0.66 grad norm: 402.51 pregrad norm: 402.51
   # NStep 0 loss 92.84, target decrease -80.502, actual decrease, -0.880 ratio 0.00 92.84 91.96 0.00

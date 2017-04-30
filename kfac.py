@@ -218,6 +218,7 @@ class Kfac():
     s.grad2 = IndexedGrad(loss=s.model.loss2, vars_=s.model.trainable_vars)
 
     s.lr = Var(-np.inf, "lr")
+    s.Lambda = Var(-np.inf, "Lambda")
     
     # covariance and SVD ops for all correctable ops, mapped to parameter
     # variable to correct
@@ -329,6 +330,7 @@ class Kfac():
   def correct(self, grad):
     """Accepts IndexedGrad object, produces corrected version."""
     kfac = self
+    s = self  # TODO: get rid of kfac.
 
     vars_ = []
     grads_new = []
@@ -344,8 +346,8 @@ class Kfac():
         B2_svd = kfac[var].B2.svd 
         A = kfac.extract_A(grad, var)    # extract activations
         B = kfac.extract_B(grad, var)    # extract backprops
-        A_new = u.regularized_inverse3(A_svd) @ A
-        B_new = u.regularized_inverse3(B2_svd) @ B
+        A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
+        B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  

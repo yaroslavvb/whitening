@@ -154,6 +154,10 @@ def regularized_inverse3(svd, L=1e-3):
     (s, u, v) = (svd.s, svd.u, svd.v)
   else:
     assert False, "Unknown type"
+
+  if L.__class__.__name__=='Var':
+    L = L.var
+    
   max_eigen = tf.reduce_max(s)
   #  max_eigen = tf.Print(max_eigen, [max_eigen], "max_eigen")
   #si = 1/(s + L*tf.ones_like(s)/max_eigen)
