@@ -1,26 +1,14 @@
-# 0.000388796451366 on GPU
-# 0.000879919660666 on CPU
+use_fixed_labels = True
+# refactored KFAC test
+# No whitening, sigmoid mnist
 
-
-# On CPU
-#x: array([ 71.31295 ,  71.312935,  71.312927,  71.312943,  64.943245,
-#        59.767071,  48.021935,  35.249264,  26.869213,  19.548452], dtype=float32)
-# On GPU
-# y: array([ 71.312767,  71.312767,  71.312767,  71.312767,  66.33728 ,                  61.447525,  48.641083,  34.91021 ,  26.023277,  19.412516])
-
-# changing to 64 bit GPU, get 18.422 after 10 steps (instead of 19.4)
-# Changing to 64 bit CPU, get 21.802806 after 10 steps
- 
 # Mac iteration time: 1606 ms
 # Linux 1080 TI iteration time: 132 ms
-
-# iteration times in ms on on gtx titan x: min: 134.06, median: 155.68
 
 # conventions. "_op things are ops"
 # "x0" means numpy
 # _live means it's used to update a variable value
 # experiment prefixes
-# prefix = "small_final" # for checkin
 prefix = "kfac_refactor_test3"
 
 import util
@@ -32,28 +20,25 @@ use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
 
 import sys
-run_small = True    # overrides dsize and num_steps
-whitening_mode = 4                 # 0 for gradient, 4 for full whitening
+whitening_mode = 1                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 1               # how often to print loss
 
-num_steps = 10000
+num_steps = 10
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = True  # convert sigmoids into linear nonlinearities
 use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
-# hack, increase lambda
-# special value of lambda for small batch (50 virtual points for 1k batch)
-# Lambda = (1e-1)/2  # this value is better loss, but hard to match on GPU
-Lambda = 2*1e-1
+#Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
+Lambda=1e-1
+if whitening_mode == 0:
+  Lambda = 0          # lambda skews result for identity cov matrices
 
 # adaptive line search
-adaptive_step = True     # adjust step length based on predicted decrease
+adaptive_step = False     # adjust step length based on predicted decrease
 adaptive_step_frequency = 1 # how often to adjust
 adaptive_step_burn_in = 0 # let optimization go for a bit before adjusting
 local_quadratics = False  # use quadratic approximation to predict loss drop
-
-measure_validation = True
 
 import networkx as nx
 import load_MNIST
@@ -89,14 +74,8 @@ if __name__=='__main__':
   u.default_dtype = dtype
   machine_epsilon = np.finfo(dtype).eps # 1e-7 or 1e-16
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
-  dsize = 10000
-  if run_small:
-    dsize = 1000
-    num_steps = 10
-    
+  dsize = 1000
   patches = train_images[:,:dsize];
-  test_patches = train_images[:,-dsize:]
-  assert dsize<25000
   fs = [dsize, 28*28, 196, 28*28]
 
   # values from deeplearning.stanford.edu/wiki/index.php/UFLDL_Tutorial
@@ -128,10 +107,7 @@ if __name__=='__main__':
     vard[var] = u.VarInfo(var_setter, var_p)
     return var
 
-  lr = init_var(0.2, "lr")
-#  lr = init_var(0.2, "lr")
-#  if purely_linear:   # need lower LR without sigmoids
-#    lr = init_var(.02, "lr")
+  lr = init_var(0.02, "lr")
     
   Wf = init_var(W0f, "Wf", True)
   Wf_copy = init_var(W0f, "Wf_copy", True)
@@ -161,6 +137,8 @@ if __name__=='__main__':
   A = [None]*(n+2)
 
   # A[0] is just for shape checks, assert fail on run
+  # Have to disable the assert test, tensorflow 1.1 tries to run it
+  # using Python static assertion testing
   with tf.control_dependencies([tf.assert_equal(0, 0, message="too huge")]):
     A[0] = u.Identity(dsize, dtype=dtype)
   A[1] = W[0]
@@ -177,6 +155,9 @@ if __name__=='__main__':
   B2 = [None]*(n+1)
   B[n] = err*d_sigmoid(A[n+1])
   sampled_labels_live = tf.random_normal((f(n), f(-1)), dtype=dtype, seed=0)
+  if use_fixed_labels:
+    sampled_labels_live = tf.ones(shape=(f(n), f(-1)), dtype=dtype)
+    
   sampled_labels = init_var(sampled_labels_live, "sampled_labels", noinit=True)
   B2[n] = sampled_labels*d_sigmoid(A[n+1])
   for i in range(n-1, -1, -1):
@@ -203,11 +184,11 @@ if __name__=='__main__':
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     if use_tikhonov:
-      whitened_A = u.regularized_inverse2(vars_svd_A[i],L=Lambda) @ A[i]
+      whitened_A = u.regularized_inverse3(vars_svd_A[i],L=Lambda) @ A[i]
     else:
       whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
     if use_tikhonov:
-      whitened_B2 = u.regularized_inverse2(vars_svd_B2[i],L=Lambda) @ B[i]
+      whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=Lambda) @ B[i]
     else:
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
     whitened_A_stable = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
@@ -239,10 +220,6 @@ if __name__=='__main__':
   save_params_op = Wf_copy.assign(Wf).op
   pre_grad_dot_grad = tf.reduce_sum(pre_grad*grad)
   pre_grad_stable_dot_grad = tf.reduce_sum(pre_grad*grad)
-  
-  param_save_op = save_params_op
-  param_restore_op = Wf.assign(Wf_copy)
-
   grad_norm = tf.reduce_sum(grad*grad)
   pre_grad_norm = u.L2(pre_grad)
   pre_grad_stable_norm = u.L2(pre_grad_stable)
@@ -294,15 +271,9 @@ if __name__=='__main__':
     sess = tf.get_default_session()
     sess.run(ops)
       
-  # create validation loss eval
-  layer = init_var(test_patches, "X_test")
-  for i in range(1, n+1):
-    layer = sigmoid(W[i] @ layer)
-  err = (layer - test_patches)
-  vloss = u.L2(err) / (2 * dsize)
-
   init_op = tf.global_variables_initializer()
   #  tf.get_default_graph().finalize()
+  
   sess = tf.InteractiveSession()
   sess.run(Wf.initializer, feed_dict=init_dict)
   sess.run(X.initializer, feed_dict=init_dict)
@@ -316,7 +287,6 @@ if __name__=='__main__':
 
   step_lengths = []     # keep track of learning rates
   losses = []
-  vlosses = []
   ratios = []           # actual loss decrease / expected decrease
   grad_norms = []       
   pre_grad_norms = []   # preconditioned grad norm squared
@@ -383,18 +353,17 @@ if __name__=='__main__':
 
     sess.run(grad.initializer)
     sess.run(pre_grad.initializer)
-
-    if measure_validation:
-      lr0, loss0, vloss0 = sess.run([lr, loss, vloss])
-    else:
-      lr0, loss0 = sess.run([lr, loss])
-      vloss0 = 0
+    
+    lr0, loss0 = sess.run([lr, loss])
     save_params_op.run()
+    util.dump32(Wf_copy, "%s_param_%d"%(prefix, step))
+    util.dump32(grad, "%s_grad_%d"%(prefix, step))
+    util.dump32(pre_grad, "%s_pre_grad_%d"%(prefix, step))
+    #    util.dump32(A[1], "%s_param_%d"%(prefix, step))
+
 
     # regular inverse becomes unstable when grad norm exceeds 1
     stabilized_mode = grad_norm.eval()<1
-
-    sess.run(param_save_op)
 
     if stabilized_mode and not use_tikhonov:
       update_params_stable_op.run()
@@ -436,21 +405,16 @@ if __name__=='__main__':
       u.dump(vals2, "line2-%d"%(i,))
       
     losses.append(loss0)
-    vlosses.append(vloss0)
     step_lengths.append(lr0)
     ratios.append(slope_ratio)
     grad_norms.append(grad_norm.eval())
     pre_grad_norms.append(pre_grad_norm.eval())
     pre_grad_stable_norms.append(pre_grad_stable_norm.eval())
 
+
     if step % report_frequency == 0:
-      print("Step %d loss %.2f, vloss: %.2f, target decrease %.3f, actual decrease, %.3f"%(step, loss0, vloss0, target_delta, actual_delta))
-#      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(step, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
-
-    if actual_delta > 0:
-      print('Observed increase in loss %.2f, rejecting step'%(actual_delta,))
-      sess.run(param_restore_op)
-
+      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(step, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
+    
     if adaptive_step_frequency and adaptive_step and step>adaptive_step_burn_in:
       # shrink if wrong prediction, don't shrink if prediction is tiny
       if slope_ratio < alpha and abs(target_delta)>1e-6 and adaptive_step:
@@ -466,15 +430,13 @@ if __name__=='__main__':
                                                lr0*growth_rate})
 
     u.record_time()
-
-    
+  u.summarize_time()
   if len(sys.argv)>1 and sys.argv[1]=='record':
     u.dump(losses, prefix+"_losses.csv")
+    sys.exit()
+    
+  targets = np.loadtxt("data/"+prefix+"_losses.csv", delimiter=",")
+  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
+  u.check_equal(losses, targets, rtol=1e-5)
+  print("Test passed")
 
-  else:
-    targets = np.loadtxt("data/kfac_refactor_test3_losses.csv", delimiter=",")
-    u.check_equal(losses, targets, rtol=1e-2)
-    print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-
-
-  u.summarize_time()

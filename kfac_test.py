@@ -1,5 +1,5 @@
 LR=0.02
-LAMBDA=1e-3
+LAMBDA=1e-1
 
 # Use lambda for small batch
 #Lambda = 2*1e-1
@@ -236,8 +236,7 @@ if __name__ == '__main__':
     u.record_time()
 
   u.summarize_time()
-  #  targets = np.loadtxt("data/kfac_refactor_test3_losses.csv", delimiter=",")
-  targets = np.loadtxt("data/kfac_refactor_test2_losses.csv", delimiter=",")
+  targets = np.loadtxt("data/kfac_refactor_test3_losses.csv", delimiter=",")
   print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
   #  u.check_equal(losses, targets, rtol=1e-2)
   u.check_equal(losses, targets, rtol=1e-5)

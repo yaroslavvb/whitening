@@ -313,6 +313,13 @@ class Kfac():
       vv = corrected_vars[0]
       assert(vv.op.name=='W_1')
       s[vv].A.svd.update()
+    elif whitening_mode == 2:
+      vv = corrected_vars[0]
+      assert(vv.op.name=='W_1')
+      s[vv].A.svd.update()
+      vv = corrected_vars[1]
+      assert(vv.op.name=='W_2')
+      s[vv].A.svd.update()
     else:
       for var in s:
         s[var].A.svd.update()
