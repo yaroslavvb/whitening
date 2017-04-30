@@ -1,5 +1,7 @@
-Lambda = 1e-3
-num_steps = 5
+# Use lambda for small batch
+Lambda = 2*1e-1
+# Lambda = 1e-3
+num_steps = 10
 use_fixed_labels = True
 
 prefix="kfac1"
@@ -216,6 +218,7 @@ if __name__ == '__main__':
 
   
   losses = []
+  u.record_time()
   for i in range(num_steps):
     #    print("Loss %.2f"%(kfac.model.loss.eval()))
     losses.append(kfac.model.loss.eval())
@@ -223,9 +226,13 @@ if __name__ == '__main__':
     #u.dump32(kfac.param.f, "%s_param_%d"%(prefix, i))
     #    u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, i))
     #    u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, i))
+    u.record_time()
 
+  u.summarize_time()
+  #  targets = np.loadtxt("data/kfac_refactor_test3_losses.csv", delimiter=",")
   targets = np.loadtxt("data/kfac_refactor_test2_losses.csv", delimiter=",")
   print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
+  #  u.check_equal(losses, targets, rtol=1e-2)
   u.check_equal(losses, targets, rtol=1e-5)
   print("Test passed")
   

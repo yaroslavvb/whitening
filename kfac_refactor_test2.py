@@ -24,7 +24,7 @@ whitening_mode = 1                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 1               # how often to print loss
 
-num_steps = 5
+num_steps = 10
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = True  # convert sigmoids into linear nonlinearities
@@ -429,7 +429,11 @@ if __name__=='__main__':
                                                lr0*growth_rate})
 
     u.record_time()
-#  u.dump(losses, prefix+"_losses.csv")
+  u.summarize_time()
+  if len(sys.argv)>1 and sys.argv[1]=='record':
+    u.dump(losses, prefix+"_losses.csv")
+    sys.exit()
+    
   targets = np.loadtxt("data/kfac_refactor_test2_losses.csv", delimiter=",")
   print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
   u.check_equal(losses, targets, rtol=1e-5)

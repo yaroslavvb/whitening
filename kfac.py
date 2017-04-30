@@ -2,7 +2,7 @@ dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
 whitening_mode = 1
 
-prefix="kfac2"
+prefix="kfac3"
 
 import sys
 import numpy as np
@@ -34,7 +34,7 @@ class Model:
 
 
 class IndexedGrad:
-  """Dictionary-like object representing a set of cached gradients indexed by
+  """OrderedDict-like object representing a set of cached gradients indexed by
   variables wrt to which the grad was taken. Values of gradient are stored in
   variables and must be explictly updated using "update" method.
 
@@ -94,6 +94,7 @@ class IndexedGrad:
     return self.grads_dict.__reversed__()
   def __contains__(self, item):
     return self.grads_dict.__contains__(item)
+
 
 class VarList:
   """Class to simplify dealing with groups of variables. Acts like a regular
@@ -194,11 +195,11 @@ class Covariance():
 
 
 class KfacCorrectionInfo():
-  """Contains information needed to correct a single layer."""
+  """Contains information needed to correct a single parameter."""
   def __init__(self):
     self.A = None  # Covariance object
     self.B2 = None # Covariance object
-    
+
 
 class Kfac():
   """Singleton class controlling gradient correction."""
@@ -245,7 +246,6 @@ class Kfac():
     assert s.param.vars_ == s.grad_new.vars_
     
     s.sess = tf.get_default_session()
-    
 
   def register_correction(self, var):
     self.kfac_correction_dict[var] = KfacCorrectionInfo()
@@ -357,9 +357,10 @@ class Kfac():
     return IndexedGrad(grads=grads_new, vars_=vars_)
 
   def reset(self):
+    """Initialize/reset all optimization related variables."""
+    
     s = self
     s.step_counter = 0
-    # initialize all optimization related variables
     # TODO: initialize first layer activations here, and not everywhere else
     #    self.model.initialize_local_vars()
     #    self.model.initialize_global_vars()
@@ -403,8 +404,6 @@ class Kfac():
     #u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, s.step_counter))
     #u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, s.step_counter))
 
-    
-    
     # TODO: decide on kfac vs s.
     kfac.run(kfac.param_save_op)   # TODO: insert lr somewhere
     lr0, loss0 = s.run(kfac.lr, s.model.loss)
