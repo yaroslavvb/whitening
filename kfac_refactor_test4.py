@@ -1,3 +1,4 @@
+regularized_svd = True
 use_fixed_labels = True
 # refactored KFAC test
 # No whitening, sigmoid mnist
@@ -9,7 +10,9 @@ use_fixed_labels = True
 # "x0" means numpy
 # _live means it's used to update a variable value
 # experiment prefixes
-prefix = "kfac_refactor_test3"
+#prefix = '32'
+#prefix = 'temp'
+prefix = "kfac_refactor_test4"
 
 import util
 import util as u
@@ -20,7 +23,7 @@ use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
 
 import sys
-whitening_mode = 1                 # 0 for gradient, 4 for full whitening
+whitening_mode = 3                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 1               # how often to print loss
 
@@ -28,9 +31,12 @@ num_steps = 10
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
 purely_linear = True  # convert sigmoids into linear nonlinearities
-use_tikhonov = True    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
+use_tikhonov = False    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 #Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
 Lambda=1e-1
+#Lambda=1e1
+#Lambda=1e10
+
 if whitening_mode == 0:
   Lambda = 0          # lambda skews result for identity cov matrices
 
@@ -67,8 +73,9 @@ def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
 if __name__=='__main__':
   np.random.seed(0)
   tf.set_random_seed(0)
-  
   dtype = np.float32
+    
+
   # 64-bit doesn't help much, search for 64-bit in
   # https://www.wolframcloud.com/objects/5f297f41-30f7-4b1b-972c-cac8d1f8d8e4
   u.default_dtype = dtype
@@ -179,8 +186,12 @@ if __name__=='__main__':
   vars_svd_A = [None]*(n+1)
   vars_svd_B2 = [None]*(n+1)
   for i in range(1,n+1):
-    cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
-    cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
+    if regularized_svd:
+      cov_A[i] = init_var(A[i]@t(A[i])/dsize+Lambda*u.Identity(f(i-1)), "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize+Lambda*u.Identity(f(i)), "cov_B2%d"%(i,))
+    else:
+      cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     if use_tikhonov:
@@ -224,27 +235,48 @@ if __name__=='__main__':
   pre_grad_norm = u.L2(pre_grad)
   pre_grad_stable_norm = u.L2(pre_grad_stable)
 
+
+  # create SVD diagnostics
+  badness_A = []
+  for i in range(1, n+1):
+    svd = vars_svd_A[i]
+    At = t(svd.v) @ A[i]
+    At_cov = tf.abs(At @ t(At))
+    # measure fraction of mass on the diagonal
+    badness = tf.trace(At_cov)/tf.reduce_sum(At_cov)
+    badness_A.append(badness)
+    
+  badness_B = []
+  for i in range(1, n+1):
+    svd = vars_svd_B2[i]
+    Bt = t(svd.v) @ B[i]
+    Bt_cov = tf.abs(Bt @ t(Bt))
+    # measure fraction of mass on the diagonal
+    badness = tf.trace(Bt_cov)/tf.reduce_sum(Bt_cov)
+    badness_B.append(badness)
+  
   def dump_svd_info(step):
     """Dump singular values and gradient values in those coordinates."""
     for i in range(1, n+1):
       svd = vars_svd_A[i]
       s0, u0, v0 = sess.run([svd.s, svd.u, svd.v])
-      util.dump(s0, "A_%d_%d"%(i, step))
+      util.dump(s0, "%s_A_%d_%d"%(prefix, i, step))
       A0 = A[i].eval()
       At0 = v0.T @ A0
-      util.dump(A0 @ A0.T, "Acov_%d_%d"%(i, step))
-      util.dump(At0 @ At0.T, "Atcov_%d_%d"%(i, step))
-      util.dump(s0, "As_%d_%d"%(i, step))
+      import pdb; pdb.set_trace()
+      util.dump(A0 @ A0.T, "%s_Acov_%d_%d"%(prefix, i, step))
+      util.dump(At0 @ At0.T, "%s_Atcov_%d_%d"%(prefix, i, step))
+      util.dump(s0, "%s_As_%d_%d"%(prefix, i, step))
 
     for i in range(1, n+1):
       svd = vars_svd_B2[i]
       s0, u0, v0 = sess.run([svd.s, svd.u, svd.v])
-      util.dump(s0, "B2_%d_%d"%(i, step))
+      util.dump(s0, "%s_B2_%d_%d"%(prefix, i, step))
       B0 = B[i].eval()
       Bt0 = v0.T @ B0
-      util.dump(B0 @ B0.T, "Bcov_%d_%d"%(i, step))
-      util.dump(Bt0 @ Bt0.T, "Btcov_%d_%d"%(i, step))
-      util.dump(s0, "Bs_%d_%d"%(i, step))      
+      util.dump(B0 @ B0.T, "%s_Bcov_%d_%d"%(prefix, i, step))
+      util.dump(Bt0 @ Bt0.T, "%s_Btcov_%d_%d"%(prefix, i, step))
+      util.dump(s0, "%s_Bs_%d_%d"%(prefix, i, step))      
     
   def advance_batch():
     sess.run(sampled_labels.initializer)  # new labels for next call
@@ -351,6 +383,7 @@ if __name__=='__main__':
     if step % whiten_every_n_steps==0:
       update_svds()
 
+    # dump values 
     sess.run(grad.initializer)
     sess.run(pre_grad.initializer)
     
@@ -361,6 +394,23 @@ if __name__=='__main__':
     util.dump32(pre_grad, "%s_pre_grad_%d"%(prefix, step))
     #    util.dump32(A[1], "%s_param_%d"%(prefix, step))
 
+    # badness_A0 = sess.run(badness_A)
+    # badness_B0 = sess.run(badness_B)
+    # print("Badness A", badness_A0)
+    # print("Badness B", badness_B0)
+    
+    #    dump_svd_info(step)
+    #    u.dump(A[1], prefix+"_A1.csv")
+    #    u.dump(A[2], prefix+"_A2.csv")
+    #    u.dump(B[1], prefix+"_A2.csv")
+    #    u.dump(B[2], prefix+"_A2.csv")
+    #    u.dump(, prefix+"_A2.csv")
+
+    # svd diagnostics
+    
+    
+    # figure out why update is unstable at step=2
+    
 
     # regular inverse becomes unstable when grad norm exceeds 1
     stabilized_mode = grad_norm.eval()<1
@@ -392,7 +442,7 @@ if __name__=='__main__':
       target_delta2 = y_expected - loss0
       target_delta2_list.append(target_delta2)
       
-    
+
     actual_delta = loss1 - loss0
     actual_slope = actual_delta/lr0
     slope_ratio = actual_slope/target_slope  # between 0 and 1.01

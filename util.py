@@ -164,6 +164,22 @@ def regularized_inverse3(svd, L=1e-3):
   si = (1+L*tf.ones_like(s))/(s+L*tf.ones_like(s))
   return u @ tf.diag(si) @ tf.transpose(v)
 
+def regularized_inverse4(svd, L=1e-3):
+  """Uses relative norm"""
+  if svd.__class__.__name__=='SvdTuple' or svd.__class__.__name__=='SvdWrapper':
+    (s, u, v) = (svd.s, svd.u, svd.v)
+  else:
+    assert False, "Unknown type"
+
+  if L.__class__.__name__=='Var':
+    L = L.var
+    
+  max_eigen = tf.reduce_max(s)
+  L = L/max_eigen
+  si = (1+L*tf.ones_like(s))/(s+L*tf.ones_like(s))
+  #  si = tf.ones_like(s)
+  return u @ tf.diag(si) @ tf.transpose(v)
+
 def pseudo_inverse_scipy(tensor):
     dtype = tensor.dtype
     print(linalg.pinv, tensor, dtype)

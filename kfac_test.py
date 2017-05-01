@@ -1,6 +1,7 @@
+regularized_svd = True
 LR=0.02
 LAMBDA=1e-1
-
+use_tikhonov=False
 # Use lambda for small batch
 #Lambda = 2*1e-1
 #Lambda = 1e-3
@@ -104,7 +105,7 @@ def model_creator(batch_size, dtype=np.float32):
   W.insert(0, X)
   A = [None]*(n+2)
   A[1] = W[0]
-  W0f_old = W_uniform(fs[2],fs[3]).astype(np.float32) # to match previous generation
+  W0f_old = W_uniform(fs[2],fs[3]).astype(dtype) # to match previous generation
   W0s_old = u.unflatten(W0f_old, fs[1:])   # perftodo: this creates transposes
   for i in range(1, n+1):
     #    W[i] = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
@@ -139,12 +140,21 @@ def model_creator(batch_size, dtype=np.float32):
   dW2 = [None]*(n+1)
   pre_dW = [None]*(n+1)   # preconditioned dW
   for i in range(1,n+1):
-    cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,), is_global=False)
-    cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,), is_global=False)
+    if regularized_svd:
+      cov_A[i] = init_var(A[i]@t(A[i])/dsize+LAMBDA*u.Identity(f(i-1)), "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize+LAMBDA*u.Identity(f(i)), "cov_B2%d"%(i,))
+    else:
+      cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
-    whitened_A = u.regularized_inverse3(vars_svd_A[i],L=LAMBDA) @ A[i]
-    whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=LAMBDA) @ B[i]
+    if use_tikhonov:
+      whitened_A = u.regularized_inverse3(vars_svd_A[i],L=LAMBDA) @ A[i]
+      whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=LAMBDA) @ B[i]
+    else:
+      whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
+      whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
+    
     dW[i] = (B[i] @ t(A[i]))/dsize
     dW2[i] = B[i] @ t(A[i])
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
@@ -236,7 +246,7 @@ if __name__ == '__main__':
     u.record_time()
 
   u.summarize_time()
-  targets = np.loadtxt("data/kfac_refactor_test3_losses.csv", delimiter=",")
+  targets = np.loadtxt("data/kfac_refactor_test4_losses.csv", delimiter=",")
   print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
   #  u.check_equal(losses, targets, rtol=1e-2)
   u.check_equal(losses, targets, rtol=1e-5)

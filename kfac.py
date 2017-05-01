@@ -1,6 +1,8 @@
+regularized_svd = True
 dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
-whitening_mode = 2
+step_rejection = False    # reject bad steps
+whitening_mode = 3
 
 prefix="kfac3"
 
@@ -183,8 +185,12 @@ class Covariance():
   as decomposition of this covariance.
   """
   
-  def __init__(self, data, var, prefix):
-    cov_op = data @ t(data) / dsize
+  def __init__(self, data, var, prefix, Lambda):
+    if regularized_svd:
+      cov_op = data @ t(data) / dsize
+      cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
+    else:
+      cov_op = data @ t(data) / dsize
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
     # TODO: use u.get_variable for cov reuse. 
@@ -230,8 +236,8 @@ class Kfac():
       A = s.extract_A(s.grad2, var)
       B2 = s.extract_B2(s.grad2, var)  # todo: change to extract_B
       s.register_correction(var)
-      s[var].A = Covariance(A, var, "A")
-      s[var].B2 = Covariance(B2, var, "B2")
+      s[var].A = Covariance(A, var, "A", s.Lambda.var)
+      s[var].B2 = Covariance(B2, var, "B2", s.Lambda.var)
 
     s.grad_new = s.correct(s.grad)
     s.grad_dot_grad_new_op = tf.reduce_sum(s.grad.f * s.grad_new.f)
@@ -320,6 +326,17 @@ class Kfac():
       vv = corrected_vars[1]
       assert(vv.op.name=='W_2')
       s[vv].A.svd.update()
+    elif whitening_mode == 3:
+      vv = corrected_vars[0]
+      assert(vv.op.name=='W_1')
+      s[vv].A.svd.update()
+      vv = corrected_vars[1]
+      assert(vv.op.name=='W_2')
+      s[vv].A.svd.update()
+      vv = corrected_vars[1]
+      assert(vv.op.name=='W_2')
+      s[vv].B2.svd.update()
+      
     else:
       for var in s:
         s[var].A.svd.update()
@@ -353,8 +370,12 @@ class Kfac():
         B2_svd = kfac[var].B2.svd 
         A = kfac.extract_A(grad, var)    # extract activations
         B = kfac.extract_B(grad, var)    # extract backprops
-        A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
-        B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
+        if not regularized_svd:
+          A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
+          B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
+        else:
+          A_new = u.pseudo_inverse2(A_svd) @ A
+          B_new = u.pseudo_inverse2(B2_svd) @ B
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  
@@ -408,7 +429,7 @@ class Kfac():
     kfac.grad2.update()     # gradient from synth labels (don't need?)
     kfac.grad_new.update()  # corrected gradient
 
-    u.dump32(kfac.param.f, "%s_param_%d"%(prefix, s.step_counter))
+    #    u.dump32(kfac.param.f, "%s_param_%d"%(prefix, s.step_counter))
     #myop = tf.reduce_sum(kfac.param.f*kfac.param.f*kfac.lr.var)
     #u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, s.step_counter))
     #u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, s.step_counter))
@@ -439,7 +460,7 @@ class Kfac():
     s.record('grad_new_norm', s.run(s.grad_new_norm_op))
     s.record('target_delta', target_delta)
 
-    if actual_delta > 0:
+    if step_rejection and actual_delta > 0:
       print('Observed increase in loss %.2f, rejecting step'%(actual_delta,))
       s.run(s.param_restore_op)
 
