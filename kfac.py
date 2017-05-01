@@ -79,7 +79,7 @@ class IndexedGrad:
     self.f = u.flatten(self.cached)
     self.cached = VarList(self.cached)
     assert list(self.cached) == list(self.grads_dict.values())
-  
+
   def update(self):
     """Upgrade cached gradients using from their live values using
     default session."""
@@ -100,6 +100,16 @@ class IndexedGrad:
     return self.grads_dict.__reversed__()
   def __contains__(self, item):
     return self.grads_dict.__contains__(item)
+
+  def from_grads_and_vars(grads_and_vars):
+    grads = [g[0] for g in grads_and_vars]
+    vars_ = [g[1] for g in grads_and_vars]
+    return IndexedGrad(grads=grads, vars_=vars_)
+
+  def to_grads_and_vars(self):
+    grads = list(self.cached)
+    vars_ = list(self.vars_)
+    return zip(grads, vars_)
 
 
 class VarList:
@@ -285,6 +295,11 @@ class Kfac():
     ii = list(grad).index(var)  # todo: refactor this to fetch from grad
     grad_live = grad.live[ii]
     op = grad_live.op
+    
+    # handle the case of matmul being wrapped in tf.Identity
+    if op.op_def.name == 'Identity':
+      print("Trying parent")
+      op = op.inputs[0].op
     assert op.op_def.name == 'MatMul'
     assert op.get_attr("transpose_a") == False
     assert op.get_attr("transpose_b") == True
@@ -299,6 +314,10 @@ class Kfac():
     ii = list(grad).index(var)  # todo: refactor this to fetch from grad
     grad_live = grad.live[ii]
     op = grad_live.op
+    # handle the case of matmul being wrapped in tf.Identity
+    if op.op_def.name == 'Identity':
+      print("Trying parent")
+      op = op.inputs[0].op
     assert op.op_def.name == 'MatMul'
     assert op.get_attr("transpose_a") == False
     assert op.get_attr("transpose_b") == True

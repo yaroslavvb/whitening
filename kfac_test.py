@@ -23,6 +23,7 @@ from util import t  # transpose
 import kfac as kfac_lib
 from kfac import Model
 from kfac import Kfac
+from kfac import IndexedGrad
 import kfac
 dsize = kfac.dsize
 
@@ -224,12 +225,31 @@ if __name__ == '__main__':
   kfac.reset()    # resets optimization variables (not model variables)
   kfac.lr.set(LR)
   kfac.Lambda.set(LAMBDA)
+
+  opt = tf.train.GradientDescentOptimizer(LR)
+  grads_and_vars = opt.compute_gradients(model.loss,
+                                         var_list=model.trainable_vars)
+  grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
+  grad_new = kfac.correct(grad)
+  train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
   
   losses = []
   u.record_time()
   for i in range(num_steps):
-    losses.append(model.loss.eval())
-    kfac.adaptive_step()
+    loss0 = model.loss.eval()
+    losses.append(loss0)
+    print("Loss ", loss0)
+
+    kfac.model.advance_batch()
+    kfac.update_stats()
+
+    model.advance_batch()
+    grad.update()
+    grad_new.update()
+    train_op.run()
+    
+#    kfac.adaptive_step()
+    
     u.record_time()
 
   u.summarize_time()
