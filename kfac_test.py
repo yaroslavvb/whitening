@@ -160,23 +160,23 @@ def model_creator(batch_size, dtype=np.float32):
     dW2[i] = B[i] @ t(A[i])
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
 
-  model.extra['A'] = A
-  model.extra['B'] = B
-  model.extra['B2'] = B2
-  model.extra['cov_A'] = cov_A
-  model.extra['cov_B2'] = cov_B2
-  model.extra['vars_svd_A'] = vars_svd_A
-  model.extra['vars_svd_B2'] = vars_svd_B2
-  model.extra['W'] = W
-  model.extra['dW'] = dW
-  model.extra['dW2'] = dW2
-  model.extra['pre_dW'] = pre_dW
+    #  model.extra['A'] = A
+    #  model.extra['B'] = B
+    #  model.extra['B2'] = B2
+    #  model.extra['cov_A'] = cov_A
+    #  model.extra['cov_B2'] = cov_B2
+    #  model.extra['vars_svd_A'] = vars_svd_A
+    #  model.extra['vars_svd_B2'] = vars_svd_B2
+    #  model.extra['W'] = W
+    #  model.extra['dW'] = dW
+    #  model.extra['dW2'] = dW2
+    #  model.extra['pre_dW'] = pre_dW
     
   model.loss = u.L2(err) / (2 * dsize)
   sampled_labels_live = A[n+1] + tf.random_normal((f(n), f(-1)),
                                                   dtype=dtype, seed=0)
   if use_fixed_labels:
-    sampled_labels_live = tf.ones(shape=(f(n), f(-1)), dtype=dtype)
+    sampled_labels_live = A[n+1]+tf.ones(shape=(f(n), f(-1)), dtype=dtype)
   sampled_labels = init_var(sampled_labels_live, "sampled_labels", is_global=False)
   err2 = A[n+1] - sampled_labels
   model.loss2 = u.L2(err2) / (2 * dsize)

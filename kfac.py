@@ -1,5 +1,5 @@
 do_early_init = True  # True if we want to initialize model vars as part of constructor
-dsize_inside_B = False    # for refactoring to use tf.gradients
+dsize_inside_B = True    # for refactoring to use tf.gradients
 regularized_svd = True
 dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
@@ -197,11 +197,7 @@ class Covariance():
   
   def __init__(self, data, var, prefix, Lambda):
     if regularized_svd:
-      if dsize_inside_B:
-        cov_op = data @ t(data)
-        cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
-      else:
-        cov_op = data @ t(data) / dsize
+      cov_op = data @ t(data) / dsize
       cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
     else:
       cov_op = data @ t(data) / dsize
@@ -255,8 +251,8 @@ class Kfac():
       s.register_correction(var)
       if dsize_inside_B:
         dsize_op = tf.constant(dsize, dtype=dtype)
-        s[var].A = Covariance(A/tf.sqrt(dsize_op), var, "A", s.Lambda.var)
-        s[var].B2 = Covariance(B2*tf.sqrt(dsize_op), var, "B2", s.Lambda.var)
+        s[var].A = Covariance(A, var, "A", s.Lambda.var)
+        s[var].B2 = Covariance(B2*dsize_op, var, "B2", s.Lambda.var)
       else:
         s[var].A = Covariance(A, var, "A", s.Lambda.var)
         s[var].B2 = Covariance(B2, var, "B2", s.Lambda.var)
@@ -283,7 +279,7 @@ class Kfac():
   # cheat for now and get those values from manual gradients
   def extract_A(self, grad, var):
     global matmul_registry
-    i = self.model.extra['W'].index(var)
+    #    i = self.model.extra['W'].index(var)
     
     assert var in matmul_registry
     ii = list(grad).index(var)  # todo: refactor this to fetch from grad
@@ -297,7 +293,7 @@ class Kfac():
     return op.inputs[1]
 
   def extract_B(self, grad, var):
-    i = self.model.extra['W'].index(var)
+    #    i = self.model.extra['W'].index(var)
 
     assert var in matmul_registry
     ii = list(grad).index(var)  # todo: refactor this to fetch from grad
@@ -314,8 +310,19 @@ class Kfac():
     return self.model.extra['dW'][i]
 
   def extract_B2(self, grad, var):
-    i = self.model.extra['W'].index(var)
-    return self.model.extra['B2'][i]
+    #    i = self.model.extra['W'].index(var)
+
+    assert var in matmul_registry
+    ii = list(grad).index(var)  # todo: refactor this to fetch from grad
+    grad_live = grad.live[ii]
+    op = grad_live.op
+    assert op.op_def.name == 'MatMul'
+    assert op.get_attr("transpose_a") == False
+    assert op.get_attr("transpose_b") == True
+    if dsize_inside_B:
+      return op.inputs[0]
+    return op.inputs[0]*dsize
+  #    return self.model.extra['B2'][i]
 
 
    # https://docs.python.org/3/reference/datamodel.html?emulating-container-types#emulating-container-types
