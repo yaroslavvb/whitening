@@ -12,7 +12,7 @@ use_fixed_labels = True
 # experiment prefixes
 #prefix = '32'
 #prefix = 'temp'
-prefix = "kfac_refactor_test4"
+prefix = "kfac_refactor_test5"
 
 import util
 import util as u
@@ -23,7 +23,7 @@ use_gpu = True
 do_line_search = False       # line-search and dump values at each iter
 
 import sys
-whitening_mode = 3                 # 0 for gradient, 4 for full whitening
+whitening_mode = 4                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
 report_frequency = 1               # how often to print loss
 
@@ -486,7 +486,7 @@ if __name__=='__main__':
     sys.exit()
     
   targets = np.loadtxt("data/"+prefix+"_losses.csv", delimiter=",")
-  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-  u.check_equal(losses, targets, rtol=1e-5)
+  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets, np.inf))
+  u.check_equal(losses, targets, rtol=1e-4)
   print("Test passed")
 
