@@ -20,6 +20,7 @@ import util as u
 import util
 from util import t  # transpose
 
+import kfac as kfac_lib
 from kfac import Model
 from kfac import Kfac
 import kfac
@@ -110,7 +111,7 @@ def model_creator(batch_size, dtype=np.float32):
   for i in range(1, n+1):
     #    W[i] = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
     W[i] = init_var(W0s_old[i-1], "W_%d"%(i,), is_global=True)
-    A[i+1] = nonlin(W[i] @ A[i])
+    A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
     
   err = A[n+1] - A[1]
 
@@ -211,44 +212,29 @@ if __name__ == '__main__':
   tf.set_random_seed(0)
   
   sess = tf.InteractiveSession()
-#  model = model_creator(dsize) # TODO: share dataset between models?
+  model = model_creator(dsize) # TODO: share dataset between models?
+  model.initialize_global_vars()
+  model.initialize_local_vars()
+  
   kfac = Kfac(model_creator)   # creates another copy of model, initializes
                                # local variables
 
   kfac.model.initialize_global_vars()
   kfac.model.initialize_local_vars()
-  #  print("Loss0 %.2f"%(kfac.model.loss.eval()))
   kfac.reset()    # resets optimization variables (not model variables)
   kfac.lr.set(LR)
   kfac.Lambda.set(LAMBDA)
-
-  #  Step 0 loss 92.84, target decrease -80.502, actual decrease, -52.891 ratio 0.66 grad norm: 402.51 pregrad norm: 402.51
-  # NStep 0 loss 92.84, target decrease -80.502, actual decrease, -0.880 ratio 0.00 92.84 91.96 0.00
-
-  # old:  Step 0 loss 92.84, target decrease -80.502, actual decrease, -52.891 ratio 0.66 grad norm: 402.51 pregrad norm: 402.51
-#  new:   Step 1 loss 92.84, target decrease -87.571, actual decrease, -0.467 ratio 0.00
-
-# Need:
-#  Step 0 loss 92.84, target decrease -402.508, actual decrease, -63.343 ratio 0.16 grad norm: 402.51 pregrad norm: 402.51
-# Get:
-# NStep 0 loss 92.84, target decrease -80.502, actual decrease, -2.161827 ratio 0.01
-
   
   losses = []
   u.record_time()
   for i in range(num_steps):
-    #    print("Loss %.2f"%(kfac.model.loss.eval()))
-    losses.append(kfac.model.loss.eval())
+    losses.append(model.loss.eval())
     kfac.adaptive_step()
-    #u.dump32(kfac.param.f, "%s_param_%d"%(prefix, i))
-    #    u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, i))
-    #    u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, i))
     u.record_time()
 
   u.summarize_time()
   targets = np.loadtxt("data/kfac_refactor_test5_losses.csv", delimiter=",")
   print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-  #  u.check_equal(losses, targets, rtol=1e-2)
   u.check_equal(losses, targets, rtol=1e-4)
   print("Test passed")
   

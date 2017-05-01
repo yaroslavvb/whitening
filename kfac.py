@@ -106,8 +106,9 @@ class VarList:
   variables.
 
   a = VarList([tf.Variable(),tf.Variable()])
-  b = a.copy()            # new list of variables of same sizes
+  b = a.copy()            # new VarList of same sizes
   a.f                     # flattened representation of variable list
+  a[0]                    # tf.Variable object, first
   sess.run(b.assign(a))
   """
 
@@ -143,10 +144,13 @@ class VarList:
     return tf.group(*ops, name="assign_"+self.name)
 
   def sub(self, other, weight=one):
-    """Returns an op that subtracts other from current VarList."""
+    """Returns an op that subtracts other from current VarList.
+
+    sess.run(a.sub(b))   # subtracts b from a
+    """
     assert isinstance(other, VarList)
-    
     assert len(self) == len(other)
+    
     ops = []
     if isinstance(weight, Var):
       weight = weight.var
@@ -157,6 +161,8 @@ class VarList:
 
   def __iter__(self):
     return self.vars_.__iter__()
+  def __getitem__(self, key):
+    return self.vars_.__getitem__(key)
   def __len__(self):
     return self.vars_.__len__()
 
@@ -194,7 +200,6 @@ class Covariance():
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
     # TODO: use u.get_variable for cov reuse. 
-    #    self.cov = tf.get_variable(name=cov_name, initializer=cov_op)
     self.cov = tf.Variable(name=cov_name, initial_value=cov_op)
     self.svd = u.SvdWrapper(target=self.cov, name=svd_name)
     self.cov_update_op = self.cov.initializer
@@ -313,48 +318,9 @@ class Kfac():
 
     # update SVDs
     corrected_vars = list(s)
-    if whitening_mode == 0:
-      return
-    elif whitening_mode == 1:
-      vv = corrected_vars[0]
-      assert(vv.op.name=='W_1')
-      s[vv].A.svd.update()
-    elif whitening_mode == 2:
-      vv = corrected_vars[0]
-      assert(vv.op.name=='W_1')
-      s[vv].A.svd.update()
-      vv = corrected_vars[1]
-      assert(vv.op.name=='W_2')
-      s[vv].A.svd.update()
-    elif whitening_mode == 3:
-      vv = corrected_vars[0]
-      assert(vv.op.name=='W_1')
-      s[vv].A.svd.update()
-      vv = corrected_vars[1]
-      assert(vv.op.name=='W_2')
-      s[vv].A.svd.update()
-      vv = corrected_vars[1]
-      assert(vv.op.name=='W_2')
-      s[vv].B2.svd.update()
-      
-    elif whitening_mode == 4:
-      vv = corrected_vars[0]
-      assert(vv.op.name=='W_1')
-      s[vv].A.svd.update()
-      vv = corrected_vars[1]
-      assert(vv.op.name=='W_2')
-      s[vv].A.svd.update()
-      vv = corrected_vars[1]
-      assert(vv.op.name=='W_2')
-      s[vv].B2.svd.update()
-      vv = corrected_vars[0]
-      assert(vv.op.name=='W_1')
-      s[vv].B2.svd.update()
-      
-    else:
-      for var in s:
-        s[var].A.svd.update()
-        s[var].B2.svd.update()
+    for var in s:
+      s[var].A.svd.update()
+      s[var].B2.svd.update()
 
   def needs_correction(self, var):  # returns True if gradient of given var is
     assert len(self.model.trainable_vars) == 2
@@ -367,8 +333,7 @@ class Kfac():
 
   def correct(self, grad):
     """Accepts IndexedGrad object, produces corrected version."""
-    kfac = self
-    s = self  # TODO: get rid of kfac.
+    s = self
 
     vars_ = []
     grads_new = []
@@ -378,12 +343,12 @@ class Kfac():
     
     for var in grad:
       vars_.append(var)
-      if kfac.needs_correction(var):
+      if s.needs_correction(var):
         # correct the gradient. Assume op is left matmul
-        A_svd = kfac[var].A.svd
-        B2_svd = kfac[var].B2.svd 
-        A = kfac.extract_A(grad, var)    # extract activations
-        B = kfac.extract_B(grad, var)    # extract backprops
+        A_svd = s[var].A.svd
+        B2_svd = s[var].B2.svd 
+        A = s.extract_A(grad, var)    # extract activations
+        B = s.extract_B(grad, var)    # extract backprops
         if not regularized_svd:
           A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
           B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
@@ -393,8 +358,8 @@ class Kfac():
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  
-        A = kfac.extract_A(grad, var)
-        B = kfac.extract_B(grad, var)
+        A = s.extract_A(grad, var)
+        B = s.extract_B(grad, var)
         dW = B@t(A)/dsize   
         grads_new.append(dW)
 
@@ -425,7 +390,6 @@ class Kfac():
     """Performs a single KFAC step with adaptive learning rate."""
 
     s = self
-    kfac = self
     
     # adaptive line search parameters
     down_adjustment_frequency = 1
@@ -436,37 +400,25 @@ class Kfac():
     report_frequency = 1
     
 
-    kfac.model.advance_batch()
-    kfac.update_stats()       # update cov matrices and svds
+    s.model.advance_batch()
+    s.update_stats()       # update cov matrices and svds
 
-    kfac.grad.update()      # gradient (ptodo, already updated in stats)
-    kfac.grad2.update()     # gradient from synth labels (don't need?)
-    kfac.grad_new.update()  # corrected gradient
+    s.grad.update()      # gradient (ptodo, already updated in stats)
+    s.grad2.update()     # gradient from synth labels (don't need?)
+    s.grad_new.update()  # corrected gradient
 
-    #    u.dump32(kfac.param.f, "%s_param_%d"%(prefix, s.step_counter))
-    #myop = tf.reduce_sum(kfac.param.f*kfac.param.f*kfac.lr.var)
-    #u.dump32(kfac.grad.f, "%s_grad_%d"%(prefix, s.step_counter))
-    #u.dump32(kfac.grad_new.f, "%s_pre_grad_%d"%(prefix, s.step_counter))
+    # TODO: decide on s vs s.
+    s.run(s.param_save_op)   # TODO: insert lr somewhere
+    lr0, loss0 = s.run(s.lr, s.model.loss)
 
-    # TODO: decide on kfac vs s.
-    kfac.run(kfac.param_save_op)   # TODO: insert lr somewhere
-    lr0, loss0 = s.run(kfac.lr, s.model.loss)
-
-    # u.dump32(s.param.f, "hi1")
-    # u.dump32(s.param.f, "hi2")
-    # u.dump32(s.grad_new.f, "hi3")
-    # sys.exit()
-    
     s.run(s.param_update_op)
     loss1 = s.run(s.model.loss)
     
     target_slope = -s.run(s.grad_dot_grad_new_op)
-    #    target_slope = -s.run(s.grad_dot_grad_op)
-    target_delta = lr0*target_slope    # todo: get rid of target_deltas?
+    target_delta = lr0*target_slope
     actual_delta = loss1 - loss0
     actual_slope = actual_delta/lr0
     slope_ratio = actual_slope/target_slope  # between 0 and 1.01
-    #    import pdb; pdb.set_trace()
     
     s.record('loss', loss0)
     s.record('step_length', lr0)
@@ -521,6 +473,15 @@ def vargroup_test():
   sess.run(tf.global_variables_initializer())
   sess.run(a.sub(b, weight=1))
   u.check_equal(v1.eval(), 0)
+
+
+matmul_registry = OrderedDict()
+def matmul(a, b, name=None):
+  global matmul_registry
+  assert a.__class__.__name__=='Variable'
+  op = tf.matmul(a, b, name)
+  matmul_registry[a.name] = op
+  return op
 
 if __name__=='__main__':
   u.run_all_tests(sys.modules[__name__])
