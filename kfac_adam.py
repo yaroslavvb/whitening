@@ -8,12 +8,12 @@ use_tikhonov=False
 #Lambda=1e8
 #Lambda = 10
 
-num_steps = 10
+num_steps = 1000
 use_fixed_labels = True
 hack_global_init_dict = {}
 
 
-prefix="kfac_refactor_test7"
+prefix="kfac_adam1"
 
 # Test implementation of KFAC on MNIST
 import load_MNIST
@@ -233,13 +233,30 @@ if __name__ == '__main__':
   kfac.lr.set(LR)
   kfac.Lambda.set(LAMBDA)
 
+  # if len(sys.argv)>1 and sys.argv[1] == 'kfac':
+  #   use_kfac = True
+  #   opt_lr = 0.1
+  # else:
+  #   use_kfac = False
+  #   opt_lr = 0.001
+    
+
+  if len(sys.argv)>1 and sys.argv[1] == 'kfac':
+    use_kfac = True
+  else:
+    use_kfac = False
+    
   with u.capture_vars() as opt_vars:
-    opt = tf.train.AdamOptimizer()
+    opt = tf.train.AdamOptimizer(learning_rate=0.1)
     grads_and_vars = opt.compute_gradients(model.loss,
                                            var_list=model.trainable_vars)
     grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
     grad_new = kfac.correct(grad)
-    train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
+    if use_kfac:
+      train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
+    else:
+      train_op = opt.apply_gradients(grad.to_grads_and_vars())
+      
   [v.initializer.run() for v in opt_vars]
   
   losses = []
@@ -265,8 +282,8 @@ if __name__ == '__main__':
     sys.exit()
 
   u.summarize_time()
-  targets = np.loadtxt("data/kfac_refactor_test7_losses.csv", delimiter=",")
-  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-  result = u.check_equal(losses, targets, rtol=1e-4)
-  print("Test passed: %s" % (result,))
+#  targets = np.loadtxt("data/kfac_refactor_test7_losses.csv", delimiter=",")
+#  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
+#  result = u.check_equal(losses, targets, rtol=1e-4)
+#  print("Test passed: %s" % (result,))
   
