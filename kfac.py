@@ -1,3 +1,5 @@
+do_early_init = True  # True if we want to initialize model vars as part of constructor
+dsize_inside_B = False    # for refactoring to use tf.gradients
 regularized_svd = True
 dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
@@ -50,6 +52,8 @@ class IndexedGrad:
   g.live                       # live version of gradients [tensor1,tensor2...
   g.cached                     # cached version of grads [var1,var2...
   g[param]                     # cached version of grad for param
+
+  # TODO: need better way to get live gradients out
   """
   
   def __init__(self, *forbidden, grads=None, vars_=None, loss=None):
@@ -193,7 +197,11 @@ class Covariance():
   
   def __init__(self, data, var, prefix, Lambda):
     if regularized_svd:
-      cov_op = data @ t(data) / dsize
+      if dsize_inside_B:
+        cov_op = data @ t(data)
+        cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
+      else:
+        cov_op = data @ t(data) / dsize
       cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
     else:
       cov_op = data @ t(data) / dsize
@@ -220,6 +228,10 @@ class Kfac():
     s = self       # use for private members, ie, s.some_internal_val
 
     s.model = model_creator(dsize)
+    if do_early_init:
+      s.model.initialize_local_vars()
+      s.model.initialize_global_vars()
+      
     s.log = OrderedDict()
 
     # regular gradient
@@ -241,9 +253,15 @@ class Kfac():
       A = s.extract_A(s.grad2, var)
       B2 = s.extract_B2(s.grad2, var)  # todo: change to extract_B
       s.register_correction(var)
-      s[var].A = Covariance(A, var, "A", s.Lambda.var)
-      s[var].B2 = Covariance(B2, var, "B2", s.Lambda.var)
+      if dsize_inside_B:
+        dsize_op = tf.constant(dsize, dtype=dtype)
+        s[var].A = Covariance(A/tf.sqrt(dsize_op), var, "A", s.Lambda.var)
+        s[var].B2 = Covariance(B2*tf.sqrt(dsize_op), var, "B2", s.Lambda.var)
+      else:
+        s[var].A = Covariance(A, var, "A", s.Lambda.var)
+        s[var].B2 = Covariance(B2, var, "B2", s.Lambda.var)
 
+      
     s.grad_new = s.correct(s.grad)
     s.grad_dot_grad_new_op = tf.reduce_sum(s.grad.f * s.grad_new.f)
     s.grad_norm_op = u.L2(s.grad.f)
@@ -264,12 +282,32 @@ class Kfac():
     
   # cheat for now and get those values from manual gradients
   def extract_A(self, grad, var):
+    global matmul_registry
     i = self.model.extra['W'].index(var)
-    return self.model.extra['A'][i]
+    
+    assert var in matmul_registry
+    ii = list(grad).index(var)  # todo: refactor this to fetch from grad
+    grad_live = grad.live[ii]
+    op = grad_live.op
+    assert op.op_def.name == 'MatMul'
+    assert op.get_attr("transpose_a") == False
+    assert op.get_attr("transpose_b") == True
+    # tf.gradients inserts extra var/read, so below assert fails
+    #    assert op.inputs[1] == self.model.extra['A'][i]
+    return op.inputs[1]
 
   def extract_B(self, grad, var):
     i = self.model.extra['W'].index(var)
-    return self.model.extra['B'][i]
+
+    assert var in matmul_registry
+    ii = list(grad).index(var)  # todo: refactor this to fetch from grad
+    grad_live = grad.live[ii]
+    op = grad_live.op
+    assert op.op_def.name == 'MatMul'
+    assert op.get_attr("transpose_a") == False
+    assert op.get_attr("transpose_b") == True
+    return op.inputs[0]*dsize
+
 
   def extract_dW(self, grad, var):
     i = self.model.extra['W'].index(var)

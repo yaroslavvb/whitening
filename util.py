@@ -392,7 +392,9 @@ def check_close(a0, b0):
   return check_equal(a0, b0, rtol=1e-5, atol=1e-9)
   
 def check_equal(a0, b0, rtol=1e-9, atol=1e-12):
-  """Helper function to check that two vectors are equal."""
+  """Helper function to check that two vectors are equal. If inputs are Tensors
+  will evaluate them in default session."""
+
 
   a = a0.eval() if hasattr(a0, "eval") else a0
   b = b0.eval() if hasattr(b0, "eval") else b0
