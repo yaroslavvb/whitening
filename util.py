@@ -1,4 +1,6 @@
-import tensorflow as tf
+import contextlib
+import inspect
+import inspect
 import networkx as nx
 import numpy as np
 import os
@@ -6,7 +8,6 @@ import sys
 import tensorflow as tf
 import time
 import traceback
-import inspect
 
 default_dtype = tf.float32
 USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
@@ -398,10 +399,12 @@ def check_equal(a0, b0, rtol=1e-9, atol=1e-12):
 
   a = a0.eval() if hasattr(a0, "eval") else a0
   b = b0.eval() if hasattr(b0, "eval") else b0
-  
+
+  check_passed = True
   try:
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
   except Exception as e:
+    check_passed = False
     print("Error" + "-"*60)
     for line in traceback.format_stack():
       print(line.strip())
@@ -412,6 +415,8 @@ def check_equal(a0, b0, rtol=1e-9, atol=1e-12):
     efmt = traceback.format_exc()
     print(efmt)
     #    import pdb; pdb.set_trace()
+
+  return check_passed
 
 # TensorShape([Dimension(2), Dimension(10)]) => (2, 10)
 def fix_shape(tf_shape):
@@ -860,6 +865,41 @@ def run_all_tests(module):
       with timeit():
         func()
   print(module.__name__+" tests passed.")
+
+@contextlib.contextmanager
+def capture_ops():
+  """Decorator to capture ops created in the block.
+  with capture_ops() as ops:
+    # create some ops
+  print(ops) # => prints ops created.
+  """
+
+  micros = int(time.time()*10**6)
+  scope_name = str(micros)
+  op_list = []
+  with tf.name_scope(scope_name):
+    yield op_list
+
+  g = tf.get_default_graph()
+  op_list.extend(ge.select_ops(scope_name+"/.*", graph=g))
+
+@contextlib.contextmanager
+def capture_vars():
+  """Decorator to capture global variables created in the block.
+  """
+
+
+  micros = int(time.time()*10**6)
+  scope_name = "capture_vars_"+str(micros)
+  op_list = []
+  with tf.variable_scope(scope_name):
+    yield op_list
+
+  g = tf.get_default_graph()
+  for v in tf.global_variables():
+    scope = v.name.split('/', 1)[0]
+    if scope == scope_name:
+      op_list.append(v)
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])

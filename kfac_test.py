@@ -10,8 +10,10 @@ use_tikhonov=False
 
 num_steps = 10
 use_fixed_labels = True
+hack_global_init_dict = {}
 
-prefix="kfac1"
+
+prefix="kfac_refactor_test7"
 
 # Test implementation of KFAC on MNIST
 import load_MNIST
@@ -27,6 +29,7 @@ from kfac import IndexedGrad
 import kfac
 dsize = kfac.dsize
 
+import sys
 import tensorflow as tf
 import numpy as np
 
@@ -51,6 +54,8 @@ def ng_init(rows, cols):
 
 def model_creator(batch_size, dtype=np.float32):
   """Create MNIST autoencoder model. Dataset is part of model."""
+
+  global hack_global_init_dict
   
   model = Model()
 
@@ -206,6 +211,8 @@ def model_creator(batch_size, dtype=np.float32):
     sess.run(local_init_op, feed_dict=init_dict)
   model.initialize_local_vars = initialize_local_vars
 
+  hack_global_init_dict = init_dict
+  
   return model
 
 if __name__ == '__main__':
@@ -226,15 +233,18 @@ if __name__ == '__main__':
   kfac.lr.set(LR)
   kfac.Lambda.set(LAMBDA)
 
-  opt = tf.train.GradientDescentOptimizer(LR)
-  grads_and_vars = opt.compute_gradients(model.loss,
-                                         var_list=model.trainable_vars)
-  grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
-  grad_new = kfac.correct(grad)
-  train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
+  with u.capture_vars() as opt_vars:
+    opt = tf.train.AdamOptimizer()
+    grads_and_vars = opt.compute_gradients(model.loss,
+                                           var_list=model.trainable_vars)
+    grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
+    grad_new = kfac.correct(grad)
+    train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
+  [v.initializer.run() for v in opt_vars]
   
   losses = []
   u.record_time()
+
   for i in range(num_steps):
     loss0 = model.loss.eval()
     losses.append(loss0)
@@ -248,13 +258,15 @@ if __name__ == '__main__':
     grad_new.update()
     train_op.run()
     
-#    kfac.adaptive_step()
-    
     u.record_time()
 
+  if len(sys.argv)>1 and sys.argv[1]=='record':
+    u.dump(losses, prefix+"_losses.csv")
+    sys.exit()
+
   u.summarize_time()
-  targets = np.loadtxt("data/kfac_refactor_test6_losses.csv", delimiter=",")
+  targets = np.loadtxt("data/kfac_refactor_test7_losses.csv", delimiter=",")
   print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-  u.check_equal(losses, targets, rtol=1e-4)
-  print("Test passed")
+  result = u.check_equal(losses, targets, rtol=1e-4)
+  print("Test passed: %s" % (result,))
   
