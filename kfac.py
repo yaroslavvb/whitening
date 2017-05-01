@@ -323,8 +323,9 @@ class Kfac():
       s[var].B2.svd.update()
 
   def needs_correction(self, var):  # returns True if gradient of given var is
+    global matmul_registry
     assert len(self.model.trainable_vars) == 2
-    if var in self.model.trainable_vars:
+    if var in matmul_registry:
       return True
     else:
       print("returning false for ", var)
@@ -480,7 +481,7 @@ def matmul(a, b, name=None):
   global matmul_registry
   assert a.__class__.__name__=='Variable'
   op = tf.matmul(a, b, name)
-  matmul_registry[a.name] = op
+  matmul_registry[a] = op
   return op
 
 if __name__=='__main__':
