@@ -12,7 +12,7 @@ use_fixed_labels = True
 # experiment prefixes
 #prefix = '32'
 #prefix = 'temp'
-prefix = "kfac_refactor_test5"
+prefix = "kfac_refactor_test6"
 
 import util
 import util as u
@@ -30,7 +30,7 @@ report_frequency = 1               # how often to print loss
 num_steps = 10
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 
-purely_linear = True  # convert sigmoids into linear nonlinearities
+purely_linear = False  # convert sigmoids into linear nonlinearities
 use_tikhonov = False    # use Tikhonov reg instead of Moore-Penrose pseudo-inv
 #Lambda = 1e-3          # magic lambda value from Jimmy Ba for Tikhonov
 Lambda=1e-1
@@ -389,9 +389,9 @@ if __name__=='__main__':
     
     lr0, loss0 = sess.run([lr, loss])
     save_params_op.run()
-    util.dump32(Wf_copy, "%s_param_%d"%(prefix, step))
-    util.dump32(grad, "%s_grad_%d"%(prefix, step))
-    util.dump32(pre_grad, "%s_pre_grad_%d"%(prefix, step))
+    # util.dump32(Wf_copy, "%s_param_%d"%(prefix, step))
+    # util.dump32(grad, "%s_grad_%d"%(prefix, step))
+    # util.dump32(pre_grad, "%s_pre_grad_%d"%(prefix, step))
     #    util.dump32(A[1], "%s_param_%d"%(prefix, step))
 
     # badness_A0 = sess.run(badness_A)

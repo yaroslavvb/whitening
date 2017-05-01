@@ -321,7 +321,8 @@ class Kfac():
     assert op.get_attr("transpose_b") == True
     if dsize_inside_B:
       return op.inputs[0]
-    return op.inputs[0]*dsize
+    else:
+      return op.inputs[0]*dsize
   #    return self.model.extra['B2'][i]
 
 
