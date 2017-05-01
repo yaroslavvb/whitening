@@ -2,7 +2,7 @@ regularized_svd = True
 dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
 step_rejection = False    # reject bad steps
-whitening_mode = 3
+whitening_mode = 4
 
 prefix="kfac3"
 
@@ -335,6 +335,20 @@ class Kfac():
       s[vv].A.svd.update()
       vv = corrected_vars[1]
       assert(vv.op.name=='W_2')
+      s[vv].B2.svd.update()
+      
+    elif whitening_mode == 4:
+      vv = corrected_vars[0]
+      assert(vv.op.name=='W_1')
+      s[vv].A.svd.update()
+      vv = corrected_vars[1]
+      assert(vv.op.name=='W_2')
+      s[vv].A.svd.update()
+      vv = corrected_vars[1]
+      assert(vv.op.name=='W_2')
+      s[vv].B2.svd.update()
+      vv = corrected_vars[0]
+      assert(vv.op.name=='W_1')
       s[vv].B2.svd.update()
       
     else:
