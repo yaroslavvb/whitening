@@ -1,4 +1,3 @@
-regularized_svd = True
 LR=0.02
 LAMBDA=1e-1
 use_tikhonov=False
@@ -36,6 +35,8 @@ import numpy as np
 # TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
 purely_relu = False     # convert sigmoids into ReLUs
+regularized_svd = kfac_lib.regularized_svd
+
 
 # TODO: get rid
 def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
