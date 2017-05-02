@@ -1,7 +1,7 @@
 do_early_init = True  # True if we want to initialize model vars as part of constructor
 dsize_inside_B = True    # for refactoring to use tf.gradients
 regularized_svd = True
-dsize = 1000
+#dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
 step_rejection = False    # reject bad steps
 whitening_mode = 4
@@ -199,6 +199,11 @@ class Var:
     sess = tf.get_default_session()
     sess.run(self.setter, feed_dict={self.val_: val})
 
+def get_batch_size(data):
+  if isinstance(data, IndexedGrad):
+    return int(data.live[0].shape[1])
+  else:
+    return int(data.shape[1])
 
 class Covariance():
   """Convenience structure to keep covariance of data tensor as well
@@ -206,6 +211,7 @@ class Covariance():
   """
   
   def __init__(self, data, var, prefix, Lambda):
+    dsize = get_batch_size(data)
     if regularized_svd:
       cov_op = data @ t(data) / dsize
       cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
@@ -230,7 +236,12 @@ class Kfac():
   """Singleton class controlling gradient correction."""
   
   # TODO: assert singletonness
-  def __init__(self, model_creator):
+  def __init__(self, model_creator, dsize):
+    """
+    model_creator: function that creates Model object
+    stats_dsize is used to control the batch size of model used to collect
+      kfac statistics."""
+    
     s = self       # use for private members, ie, s.some_internal_val
 
     s.model = model_creator(dsize)
@@ -321,7 +332,10 @@ class Kfac():
     assert op.op_def.name == 'MatMul'
     assert op.get_attr("transpose_a") == False
     assert op.get_attr("transpose_b") == True
-    return op.inputs[0]*dsize
+    if dsize_inside_B:
+      return op.inputs[0]
+    else:
+      return op.inputs[0]*dsize
 
 
   def extract_dW(self, grad, var):
@@ -406,15 +420,20 @@ class Kfac():
 
     # gradient must come from the model
     assert grad.vars_ == self.model.trainable_vars
+
+    dsize = get_batch_size(grad)
     
     for var in grad:
       vars_.append(var)
+      A = s.extract_A(grad, var)    # extract activations
+      if dsize_inside_B:
+        B = s.extract_B(grad, var)*dsize    # extract backprops
+      else:
+        B = s.extract_B(grad, var)    # extract backprops
       if s.needs_correction(var):
         # correct the gradient. Assume op is left matmul
         A_svd = s[var].A.svd
         B2_svd = s[var].B2.svd 
-        A = s.extract_A(grad, var)    # extract activations
-        B = s.extract_B(grad, var)    # extract backprops
         if not regularized_svd:
           A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
           B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
@@ -424,8 +443,6 @@ class Kfac():
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  
-        A = s.extract_A(grad, var)
-        B = s.extract_B(grad, var)
         dW = B@t(A)/dsize   
         grads_new.append(dW)
 
