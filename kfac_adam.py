@@ -1,3 +1,13 @@
+import argparse
+import os
+import sys
+use_kfac = True
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
+
+args = parser.parse_args()
+
 LR=0.02
 LAMBDA=1e-1
 use_tikhonov=False
@@ -7,10 +17,13 @@ use_tikhonov=False
 #Lambda=1e8
 #Lambda = 10
 
-num_steps = 1000
+if args.mode == 'record' or args.mode == 'test':
+  num_steps = 10
+else:
+  num_steps = 100
+  
 use_fixed_labels = True
 hack_global_init_dict = {}
-
 
 prefix="kfac_adam"
 
@@ -219,11 +232,6 @@ if __name__ == '__main__':
   np.random.seed(0)
   tf.set_random_seed(0)
 
-  if len(sys.argv)>1 and sys.argv[1] == 'kfac':
-    use_kfac = True
-  else:
-    use_kfac = False
-
   dsize = 1000
   sess = tf.InteractiveSession()
   model = model_creator(dsize) # TODO: share dataset between models?
@@ -240,29 +248,32 @@ if __name__ == '__main__':
   kfac.Lambda.set(LAMBDA)
 
   with u.capture_vars() as opt_vars:
-    opt = tf.train.AdamOptimizer()
+    if use_kfac:
+      opt = tf.train.AdamOptimizer(0.1)
+    else:
+      opt = tf.train.AdamOptimizer()
+      
     grads_and_vars = opt.compute_gradients(model.loss,
                                            var_list=model.trainable_vars)
     grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
     grad_new = kfac.correct(grad)
-    if use_kfac:
-      train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
-    else:
-      train_op = opt.apply_gradients(grad.to_grads_and_vars())
-      
+    #    grad_new = kfac.correct_normalized(grad)
     train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
+    
+      
   [v.initializer.run() for v in opt_vars]
   
   losses = []
   u.record_time()
 
-  for i in range(num_steps):
+  for step in range(num_steps):
     loss0 = model.loss.eval()
     losses.append(loss0)
-    print("Loss ", loss0)
+    print("Step %d, Loss %.2f" %(step, loss0))
 
-    kfac.model.advance_batch()
-    kfac.update_stats()
+    if use_kfac:
+      kfac.model.advance_batch()
+      kfac.update_stats()
 
     model.advance_batch()
     grad.update()
@@ -271,11 +282,30 @@ if __name__ == '__main__':
     
     u.record_time()
 
-  if len(sys.argv)>1 and sys.argv[1]=='record':
-    u.dump(losses, prefix+"_losses.csv")
-    sys.exit()
-
   u.summarize_time()
+  
+  losses_fn = '%s_losses_test.csv' %(prefix,)
+  if args.mode == 'record':
+    if os.path.exists('data/'+losses_fn):
+      answer = input("%s exists, overwrite? (Y/n) "%(losses_fn,))
+      if not answer:
+        answer = "y"
+      if answer.lower() != "y":
+        print("Exiting")
+        sys.exit()
+    u.dump(losses, losses_fn)
+
+  elif args.mode == 'test':
+    targets = np.loadtxt("data/"+losses_fn, delimiter=",")
+    u.check_equal(losses, targets, rtol=1e-2)
+    u.summarize_difference(losses, targets)
+
+  
+  # if len(sys.argv)>1 and sys.argv[1]=='record':
+  #   u.dump(losses, prefix+"_losses.csv")
+  #   sys.exit()
+
+
   # targets = np.loadtxt("data/kfac_refactor_test7_losses.csv", delimiter=",")
   # print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
   # result = u.check_equal(losses, targets, rtol=1e-4)

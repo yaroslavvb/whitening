@@ -610,13 +610,17 @@ def last_time():
 def summarize_time(time_list=None):
   if time_list is None:
     time_list = global_time_list
+
+  if time_list[0]>1e9:   
+    del time_list[0]
     
   time_list = 1000*np.array(time_list)  # get seconds, convert to ms
   if len(time_list)>0:
     min = np.min(time_list)
     median = np.median(time_list)
     formatted = ["%.2f"%(d,) for d in time_list[:10]]
-    print("Times: min: %.2f, median: %.2f, times: %s"%(min, median,",".join(formatted)))
+    print("Times: min: %.2f, median: %.2f, mean: %.2f"%(min, median, np.mean(time_list)))
+    #    print("Times: min: %.2f, median: %.2f, mean: %.2f"%(min, median,",".join(formatted)))
   else:
     print("Times: <empty>")
     
@@ -909,6 +913,17 @@ def capture_vars():
     scope = v.name.split('/', 1)[0]
     if scope == scope_name:
       op_list.append(v)
+
+def Print(op):
+  return tf.Print(op, [op], op.name)
+
+def summarize_difference(source, target):
+  source = np.asarray(source)
+  machine_epsilon = np.finfo(source.dtype).eps
+  #  abs_diff = np.linalg.norm(np.asarray(source)-target, ord=np.inf)
+  abs_diff = abs(np.asarray(source)-target)
+  rel_diff = abs_diff/abs(source)/machine_epsilon
+  print("abs diff: %f, rel diff: %.1f eps " %(np.max(abs_diff), np.max(rel_diff)))
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])

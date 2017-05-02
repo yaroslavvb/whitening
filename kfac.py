@@ -448,6 +448,52 @@ class Kfac():
 
     return IndexedGrad(grads=grads_new, vars_=vars_)
 
+  def correct_normalized(self, grad):
+    """Accepts IndexedGrad object, produces corrected version normalized
+    so that gradient norm is same as before."""
+    s = self
+
+    vars_ = []
+    grads_new = []
+
+    # gradient must come from the model
+    assert grad.vars_ == self.model.trainable_vars
+
+    dsize = get_batch_size(grad)
+    old_norm = tf.sqrt(u.L2(grad.f))
+    
+    for var in grad:
+      vars_.append(var)
+      A = s.extract_A(grad, var)    # extract activations
+      if dsize_inside_B:
+        B = s.extract_B(grad, var)*dsize    # extract backprops
+      else:
+        B = s.extract_B(grad, var)    # extract backprops
+      if s.needs_correction(var):
+        # correct the gradient. Assume op is left matmul
+        A_svd = s[var].A.svd
+        B2_svd = s[var].B2.svd 
+        if not regularized_svd:
+          A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
+          B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
+        else:
+          A_new = u.pseudo_inverse2(A_svd) @ A
+          B_new = u.pseudo_inverse2(B2_svd) @ B
+        dW_new = (B_new @ t(A_new)) / dsize
+        grads_new.append(dW_new)
+      else:  
+        dW = B@t(A)/dsize   
+        grads_new.append(dW)
+
+    old_norm = tf.sqrt(u.L2(grad.f))
+    new_norm = tf.sqrt(u.L2(u.flatten(grads_new)))
+    ratio = old_norm/new_norm
+#    ratio = tf.Print(ratio, [ratio], "ratio")
+    ratio = u.Print(ratio)
+    normalized_grads_new = [g*ratio for g in grads_new]
+    
+    return IndexedGrad(grads=normalized_grads_new, vars_=vars_)
+  
   def reset(self):
     """Initialize/reset all optimization related variables."""
     
