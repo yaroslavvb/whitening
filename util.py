@@ -11,6 +11,7 @@ import traceback
 
 default_dtype = tf.float32
 USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
+DUMP_BAD_SVD=False                 # when SVD fails, dump matrix to temp
 
 if USE_MKL_SVD:
   assert np.__config__.get_info("lapack_mkl_info"), "No MKL detected :("
@@ -811,9 +812,17 @@ class SvdWrapper:
     target0 = self.target.eval()
     # A=u.diag(s).v', singular vectors are columns
     # TODO: catch "ValueError: array must not contain infs or NaNs"
-    u0, s0, vt0 = linalg.svd(target0)
-    v0 = vt0.T
-    #    v0 = vt0 # bug, makes loss increase, use for sanity checks
+    try:
+      u0, s0, vt0 = linalg.svd(target0)
+      v0 = vt0.T
+    except Exception as e:
+      print("Got error %s"%(e,))
+      if DUMP_BAD_SVD:
+        dump32(target0, "badsvd")
+      print("gesdd failed, trying gesvd  %s"%(e,))
+      u0, s0, vt0 = linalg.svd(target0, lapack_driver="gesvd")
+      v0 = vt0.T
+        
     feed_dict = {self.holder.u: u0,
                  self.holder.v: v0,
                  self.holder.s: s0}
