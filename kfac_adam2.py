@@ -1,4 +1,13 @@
-regularized_svd = True
+import argparse
+import os
+import sys
+use_kfac = True
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
+
+args = parser.parse_args()
+
 LR=0.02
 LAMBDA=1e-1
 use_tikhonov=False
@@ -8,12 +17,15 @@ use_tikhonov=False
 #Lambda=1e8
 #Lambda = 10
 
-num_steps = 1000
+if args.mode == 'record' or args.mode == 'test':
+  num_steps = 10
+else:
+  num_steps = 100
+  
 use_fixed_labels = True
 hack_global_init_dict = {}
 
-
-prefix="kfac_adam2"
+prefix="kfac_adam"
 
 # Test implementation of KFAC on MNIST
 import load_MNIST
@@ -27,7 +39,6 @@ from kfac import Model
 from kfac import Kfac
 from kfac import IndexedGrad
 import kfac
-dsize = kfac.dsize
 
 import sys
 import tensorflow as tf
@@ -36,6 +47,8 @@ import numpy as np
 # TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
 purely_relu = False     # convert sigmoids into ReLUs
+regularized_svd = kfac_lib.regularized_svd
+
 
 # TODO: get rid
 def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
@@ -102,8 +115,8 @@ def model_creator(batch_size, dtype=np.float32):
       return y*(1-y)
     
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
-  patches = train_images[:,:dsize];
-  fs = [dsize, 28*28, 196, 28*28]
+  patches = train_images[:,:batch_size];
+  fs = [batch_size, 28*28, 196, 28*28]
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
 
@@ -148,11 +161,11 @@ def model_creator(batch_size, dtype=np.float32):
   pre_dW = [None]*(n+1)   # preconditioned dW
   for i in range(1,n+1):
     if regularized_svd:
-      cov_A[i] = init_var(A[i]@t(A[i])/dsize+LAMBDA*u.Identity(f(i-1)), "cov_A%d"%(i,))
-      cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize+LAMBDA*u.Identity(f(i)), "cov_B2%d"%(i,))
+      cov_A[i] = init_var(A[i]@t(A[i])/batch_size+LAMBDA*u.Identity(f(i-1)), "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/batch_size+LAMBDA*u.Identity(f(i)), "cov_B2%d"%(i,))
     else:
-      cov_A[i] = init_var(A[i]@t(A[i])/dsize, "cov_A%d"%(i,))
-      cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
+      cov_A[i] = init_var(A[i]@t(A[i])/batch_size, "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/batch_size, "cov_B2%d"%(i,))
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     if use_tikhonov:
@@ -162,9 +175,9 @@ def model_creator(batch_size, dtype=np.float32):
       whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
     
-    dW[i] = (B[i] @ t(A[i]))/dsize
+    dW[i] = (B[i] @ t(A[i]))/batch_size
     dW2[i] = B[i] @ t(A[i])
-    pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
+    pre_dW[i] = (whitened_B2 @ t(whitened_A))/batch_size
 
     #  model.extra['A'] = A
     #  model.extra['B'] = B
@@ -178,14 +191,14 @@ def model_creator(batch_size, dtype=np.float32):
     #  model.extra['dW2'] = dW2
     #  model.extra['pre_dW'] = pre_dW
     
-  model.loss = u.L2(err) / (2 * dsize)
+  model.loss = u.L2(err) / (2 * batch_size)
   sampled_labels_live = A[n+1] + tf.random_normal((f(n), f(-1)),
                                                   dtype=dtype, seed=0)
   if use_fixed_labels:
     sampled_labels_live = A[n+1]+tf.ones(shape=(f(n), f(-1)), dtype=dtype)
   sampled_labels = init_var(sampled_labels_live, "sampled_labels", is_global=False)
   err2 = A[n+1] - sampled_labels
-  model.loss2 = u.L2(err2) / (2 * dsize)
+  model.loss2 = u.L2(err2) / (2 * batch_size)
   model.global_vars = global_vars
   model.local_vars = local_vars
   model.trainable_vars = W[1:]
@@ -218,14 +231,15 @@ def model_creator(batch_size, dtype=np.float32):
 if __name__ == '__main__':
   np.random.seed(0)
   tf.set_random_seed(0)
-  
+
+  dsize = 1000
   sess = tf.InteractiveSession()
   model = model_creator(dsize) # TODO: share dataset between models?
   model.initialize_global_vars()
   model.initialize_local_vars()
   
-  kfac = Kfac(model_creator)   # creates another copy of model, initializes
-                               # local variables
+  kfac = Kfac(model_creator, dsize)   # creates another copy of model, initializes
+  # local variables
 
   kfac.model.initialize_global_vars()
   kfac.model.initialize_local_vars()
@@ -233,39 +247,29 @@ if __name__ == '__main__':
   kfac.lr.set(LR)
   kfac.Lambda.set(LAMBDA)
 
-  # if len(sys.argv)>1 and sys.argv[1] == 'kfac':
-  #   use_kfac = True
-  #   opt_lr = 0.1
-  # else:
-  #   use_kfac = False
-  #   opt_lr = 0.001
-    
-
-  if len(sys.argv)>1 and sys.argv[1] == 'kfac':
-    use_kfac = True
-  else:
-    use_kfac = False
-    
   with u.capture_vars() as opt_vars:
-    opt = tf.train.AdamOptimizer(learning_rate=0.001)
+    if use_kfac:
+      opt = tf.train.AdamOptimizer(0.1)
+    else:
+      opt = tf.train.AdamOptimizer()
+      
     grads_and_vars = opt.compute_gradients(model.loss,
                                            var_list=model.trainable_vars)
     grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
     grad_new = kfac.correct(grad)
-    if use_kfac:
-      train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
-    else:
-      train_op = opt.apply_gradients(grad.to_grads_and_vars())
+    #    grad_new = kfac.correct_normalized(grad)
+    train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
+    
       
   [v.initializer.run() for v in opt_vars]
   
   losses = []
   u.record_time()
 
-  for i in range(num_steps):
+  for step in range(num_steps):
     loss0 = model.loss.eval()
     losses.append(loss0)
-    print("Step %d, Loss %.3f"%(i, loss0))
+    print("Step %d, Loss %.2f" %(step, loss0))
 
     if use_kfac:
       kfac.model.advance_batch()
@@ -278,14 +282,32 @@ if __name__ == '__main__':
     
     u.record_time()
 
-  if len(sys.argv)>1 and sys.argv[1]=='record':
-    u.dump(losses, prefix+"_losses.csv")
-    sys.exit()
-
   u.summarize_time()
-  u.dump(losses, "%s_%s.csv"%(prefix, use_kfac))
-#  targets = np.loadtxt("data/kfac_refactor_test7_losses.csv", delimiter=",")
-#  print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-#  result = u.check_equal(losses, targets, rtol=1e-4)
-#  print("Test passed: %s" % (result,))
+  
+  losses_fn = '%s_losses_test.csv' %(prefix,)
+  if args.mode == 'record':
+    if os.path.exists('data/'+losses_fn):
+      answer = input("%s exists, overwrite? (Y/n) "%(losses_fn,))
+      if not answer:
+        answer = "y"
+      if answer.lower() != "y":
+        print("Exiting")
+        sys.exit()
+    u.dump(losses, losses_fn)
+
+  elif args.mode == 'test':
+    targets = np.loadtxt("data/"+losses_fn, delimiter=",")
+    u.check_equal(losses, targets, rtol=1e-2)
+    u.summarize_difference(losses, targets)
+
+  
+  # if len(sys.argv)>1 and sys.argv[1]=='record':
+  #   u.dump(losses, prefix+"_losses.csv")
+  #   sys.exit()
+
+
+  # targets = np.loadtxt("data/kfac_refactor_test7_losses.csv", delimiter=",")
+  # print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
+  # result = u.check_equal(losses, targets, rtol=1e-4)
+  # print("Test passed: %s" % (result,))
   
