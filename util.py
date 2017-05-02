@@ -735,17 +735,25 @@ class SvdTuple:
   """Object to store svd tuple.
   Create as SvdTuple((s,u,v)) or SvdTuple(s, u, v).
   """
-  def __init__(self, suv, *args):
-    if list_or_tuple(suv):
-      s, u, v = suv
+  def __init__(self, suvi, *args):
+    if list_or_tuple(suvi):
+      if len(suvi) == 3:
+        s, u, v = suvi
+        inv = Identity(s.shape[0])
+      else:
+        s, u, v, inv = suvi
     else:
-      s = suv
+      s = suvi
       u = args[0]
       v = args[1]
-      assert len(args) == 2
+      if len(args)>2:
+        inv = args[2]
+      else:
+        inv = Identity(s.shape[0])
     self.s = s
     self.u = u
     self.v = v
+    self.inv = inv
 
 
 class SvdWrapper:
@@ -755,50 +763,63 @@ class SvdWrapper:
   Access result as TF vars: wrapper.s, wrapper.u, wrapper.v
   """
   
-  def __init__(self, target, name):
+  def __init__(self, target, name, do_inverses=False):
     self.name = name
     self.target = target
+    self.do_inverses = do_inverses
     self.tf_svd = SvdTuple(tf.svd(target))
 
     self.init = SvdTuple(
       ones(target.shape[0], name=name+"_s_init"),
       Identity(target.shape[0], name=name+"_u_init"),
-      Identity(target.shape[0], name=name+"_v_init")
+      Identity(target.shape[0], name=name+"_v_init"),
+      Identity(target.shape[0], name=name+"_inv_init"),
     )
 
     assert self.tf_svd.s.shape == self.init.s.shape
     assert self.tf_svd.u.shape == self.init.u.shape
     assert self.tf_svd.v.shape == self.init.v.shape
+    #    assert self.tf_svd.inv.shape == self.init.inv.shape
 
     self.cached = SvdTuple(
       tf.Variable(self.init.s, name=name+"_s"),
       tf.Variable(self.init.u, name=name+"_u"),
-      tf.Variable(self.init.v, name=name+"_v")
+      tf.Variable(self.init.v, name=name+"_v"),
+      tf.Variable(self.init.inv, name=name+"_inv"),
     )
 
     self.s = self.cached.s
     self.u = self.cached.u
     self.v = self.cached.v
+    self.inv = self.cached.inv
     
     self.holder = SvdTuple(
       tf.placeholder(default_dtype, shape=self.cached.s.shape, name=name+"_s_holder"),
       tf.placeholder(default_dtype, shape=self.cached.u.shape, name=name+"_u_holder"),
-      tf.placeholder(default_dtype, shape=self.cached.v.shape, name=name+"_v_holder")
+      tf.placeholder(default_dtype, shape=self.cached.v.shape, name=name+"_v_holder"),
+      tf.placeholder(default_dtype, shape=self.cached.inv.shape, name=name+"_inv_holder")
     )
 
     self.update_tf_op = tf.group(
       self.cached.s.assign(self.tf_svd.s),
       self.cached.u.assign(self.tf_svd.u),
-      self.cached.v.assign(self.tf_svd.v)
+      self.cached.v.assign(self.tf_svd.v),
+      self.cached.inv.assign(self.tf_svd.inv)
     )
 
     self.update_external_op = tf.group(
       self.cached.s.assign(self.holder.s),
       self.cached.u.assign(self.holder.u),
-      self.cached.v.assign(self.holder.v)
+      self.cached.v.assign(self.holder.v),
     )
 
-    self.init_ops = (self.s.initializer, self.u.initializer, self.v.initializer)
+    self.update_externalinv_op = tf.group(
+      self.cached.inv.assign(self.holder.inv),
+    )
+
+
+    self.init_ops = (self.s.initializer, self.u.initializer, self.v.initializer,
+                     self.inv.initializer)
   
 
   def update(self):
@@ -812,6 +833,19 @@ class SvdWrapper:
     sess.run(self.update_tf_op)
     
   def update_scipy(self):
+    if self.do_inverses:
+      return self.update_scipy_inv()
+    else:
+      return self.update_scipy_svd()
+
+  def update_scipy_inv(self):
+    sess = tf.get_default_session()
+    target0 = self.target.eval()
+    inv0 = linalg.inv(target0)
+    feed_dict = {self.holder.inv: inv0}
+    sess.run(self.update_externalinv_op, feed_dict=feed_dict)
+  
+  def update_scipy_svd(self):
     sess = tf.get_default_session()
     target0 = self.target.eval()
     # A=u.diag(s).v', singular vectors are columns
@@ -820,10 +854,10 @@ class SvdWrapper:
       u0, s0, vt0 = linalg.svd(target0)
       v0 = vt0.T
     except Exception as e:
-      print("Got error %s"%(e,))
+      print("Got error %s"%(repr(e),))
       if DUMP_BAD_SVD:
         dump32(target0, "badsvd")
-      print("gesdd failed, trying gesvd  %s"%(e,))
+      print("gesdd failed, trying gesvd")
       u0, s0, vt0 = linalg.svd(target0, lapack_driver="gesvd")
       v0 = vt0.T
         

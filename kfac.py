@@ -1,10 +1,15 @@
 do_early_init = True  # True if we want to initialize model vars as part of constructor
 dsize_inside_B = True    # for refactoring to use tf.gradients
-regularized_svd = True
+regularize_covariances = True  # add identity*lambda to covariance matrices
+
+inverse_methods = ["pseudo_inverse", "inverse"]
+inverse_method = "pseudo_inverse"
+inverse_method = "inverse"
+
 #dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
 step_rejection = False    # reject bad steps
-whitening_mode = 4
+whitening_mode = 4        # TODO: get rid of this
 
 prefix="kfac3"
 
@@ -212,16 +217,16 @@ class Covariance():
   
   def __init__(self, data, var, prefix, Lambda):
     dsize = get_batch_size(data)
-    if regularized_svd:
-      cov_op = data @ t(data) / dsize
+    cov_op = data @ t(data) / dsize
+    if regularize_covariances:
       cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
-    else:
-      cov_op = data @ t(data) / dsize
+      
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
     # TODO: use u.get_variable for cov reuse. 
     self.cov = tf.Variable(name=cov_name, initial_value=cov_op)
-    self.svd = u.SvdWrapper(target=self.cov, name=svd_name)
+    self.svd = u.SvdWrapper(target=self.cov, name=svd_name,
+                            do_inverses=(inverse_method=='inverse'))
     self.cov_update_op = self.cov.initializer
 
 
@@ -309,7 +314,6 @@ class Kfac():
     
     # handle the case of matmul being wrapped in tf.Identity
     if op.op_def.name == 'Identity':
-      print("Trying parent")
       op = op.inputs[0].op
     assert op.op_def.name == 'MatMul'
     assert op.get_attr("transpose_a") == False
@@ -327,7 +331,6 @@ class Kfac():
     op = grad_live.op
     # handle the case of matmul being wrapped in tf.Identity
     if op.op_def.name == 'Identity':
-      print("Trying parent")
       op = op.inputs[0].op
     assert op.op_def.name == 'MatMul'
     assert op.get_attr("transpose_a") == False
@@ -433,13 +436,16 @@ class Kfac():
       if s.needs_correction(var):
         # correct the gradient. Assume op is left matmul
         A_svd = s[var].A.svd
-        B2_svd = s[var].B2.svd 
-        if not regularized_svd:
-          A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
-          B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
-        else:
+        B2_svd = s[var].B2.svd
+        if inverse_method == 'pseudo_inverse':
           A_new = u.pseudo_inverse2(A_svd) @ A
           B_new = u.pseudo_inverse2(B2_svd) @ B
+        elif inverse_method == 'inverse':
+          A_new = A_svd.inv @ A
+          B_new = B2_svd.inv @ B
+        else:
+          assert False
+          
         dW_new = (B_new @ t(A_new)) / dsize
         grads_new.append(dW_new)
       else:  
@@ -448,51 +454,55 @@ class Kfac():
 
     return IndexedGrad(grads=grads_new, vars_=vars_)
 
-  def correct_normalized(self, grad):
-    """Accepts IndexedGrad object, produces corrected version normalized
-    so that gradient norm is same as before."""
-    s = self
+#   def correct_normalized(self, grad):
+#     """Accepts IndexedGrad object, produces corrected version normalized
+#     so that gradient norm is same as before."""
+#     s = self
 
-    vars_ = []
-    grads_new = []
+#     assert False
+#     vars_ = []
+#     grads_new = []
 
-    # gradient must come from the model
-    assert grad.vars_ == self.model.trainable_vars
+#     # gradient must come from the model
+#     assert grad.vars_ == self.model.trainable_vars
 
-    dsize = get_batch_size(grad)
-    old_norm = tf.sqrt(u.L2(grad.f))
+#     dsize = get_batch_size(grad)
+#     old_norm = tf.sqrt(u.L2(grad.f))
     
-    for var in grad:
-      vars_.append(var)
-      A = s.extract_A(grad, var)    # extract activations
-      if dsize_inside_B:
-        B = s.extract_B(grad, var)*dsize    # extract backprops
-      else:
-        B = s.extract_B(grad, var)    # extract backprops
-      if s.needs_correction(var):
-        # correct the gradient. Assume op is left matmul
-        A_svd = s[var].A.svd
-        B2_svd = s[var].B2.svd 
-        if not regularized_svd:
-          A_new = u.regularized_inverse3(A_svd, L=s.Lambda) @ A
-          B_new = u.regularized_inverse3(B2_svd, L=s.Lambda) @ B
-        else:
-          A_new = u.pseudo_inverse2(A_svd) @ A
-          B_new = u.pseudo_inverse2(B2_svd) @ B
-        dW_new = (B_new @ t(A_new)) / dsize
-        grads_new.append(dW_new)
-      else:  
-        dW = B@t(A)/dsize   
-        grads_new.append(dW)
+#     for var in grad:
+#       vars_.append(var)
+#       A = s.extract_A(grad, var)    # extract activations
+#       if dsize_inside_B:
+#         B = s.extract_B(grad, var)*dsize    # extract backprops
+#       else:
+#         B = s.extract_B(grad, var)    # extract backprops
+#       if s.needs_correction(var):
+#         # correct the gradient. Assume op is left matmul
+#         A_svd = s[var].A.svd
+#         B2_svd = s[var].B2.svd 
+#         if inverse_method == 'pseudo_inverse':
+#           A_new = u.pseudo_inverse2(A_svd) @ A
+#           B_new = u.pseudo_inverse2(B2_svd) @ B
+#         elif inverse_method == 'inverse':
+#           A_new = A_svd.inv @ A
+#           B_new = B2_svd.inv @ B
+#         else:
+#           assert False
+          
+#         dW_new = (B_new @ t(A_new)) / dsize
+#         grads_new.append(dW_new)
+#       else:  
+#         dW = B@t(A)/dsize   
+#         grads_new.append(dW)
 
-    old_norm = tf.sqrt(u.L2(grad.f))
-    new_norm = tf.sqrt(u.L2(u.flatten(grads_new)))
-    ratio = old_norm/new_norm
-#    ratio = tf.Print(ratio, [ratio], "ratio")
-    ratio = u.Print(ratio)
-    normalized_grads_new = [g*ratio for g in grads_new]
+#     old_norm = tf.sqrt(u.L2(grad.f))
+#     new_norm = tf.sqrt(u.L2(u.flatten(grads_new)))
+#     ratio = old_norm/new_norm
+# #    ratio = tf.Print(ratio, [ratio], "ratio")
+#     ratio = u.Print(ratio)
+#     normalized_grads_new = [g*ratio for g in grads_new]
     
-    return IndexedGrad(grads=normalized_grads_new, vars_=vars_)
+#     return IndexedGrad(grads=normalized_grads_new, vars_=vars_)
   
   def reset(self):
     """Initialize/reset all optimization related variables."""
