@@ -1,6 +1,8 @@
 import argparse
 import os
 import sys
+import time
+
 use_kfac = True
 
 parser = argparse.ArgumentParser()
@@ -11,11 +13,6 @@ args = parser.parse_args()
 LR=0.02
 LAMBDA=1e-1
 use_tikhonov=False
-# Use lambda for small batch
-#Lambda = 2*1e-1
-#Lambda = 1e-3
-#Lambda=1e8
-#Lambda = 10
 
 if args.mode == 'record' or args.mode == 'test':
   num_steps = 10
@@ -85,10 +82,12 @@ def model_creator(batch_size, dtype=np.float32):
       var = u.get_variable(name=name, initializer=val, reuse=is_global)
     else:
       val = np.array(val)
-      assert u.is_numeric(val), "Unknown type"
-      holder = tf.placeholder(dtype, shape=val.shape, name=name+"_holder")
-      var = u.get_variable(name=name, initializer=holder, reuse=is_global)
+      assert u.is_numeric(val), "Non-numeric type."
+      
+      var_struct = u.get_var(name=name, initializer=val, reuse=is_global)
+      holder = var_struct.val_
       init_dict[holder] = val
+      var = var_struct.var
 
     if is_global:
       global_vars.append(var)
@@ -115,7 +114,7 @@ def model_creator(batch_size, dtype=np.float32):
     else: 
       return y*(1-y)
     
-  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
+  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(dtype)
   patches = train_images[:,:batch_size];
   fs = [batch_size, 28*28, 196, 28*28]
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
@@ -130,14 +129,10 @@ def model_creator(batch_size, dtype=np.float32):
   W0s_old = u.unflatten(W0f_old, fs[1:])   # perftodo: this creates transposes
   for i in range(1, n+1):
     #    temp = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
-    init_val1 = W0s_old[i-1]
-
-    # TODO: must use tf.constant here, so init_var logic with feed_dict saving
-    # fails, remove tf.constant and debug
-    init_val2 = tf.constant(ng_init(f(i), f(i-1)).astype(dtype))
-
-    W[i] = init_var(init_val2, "W_%d"%(i,), is_global=True)
-    print(W[i].shape)
+    #    init_val1 = W0s_old[i-1]
+    init_val = ng_init(f(i), f(i-1)).astype(dtype)
+    W[i] = init_var(init_val, "W_%d"%(i,),
+                    is_global=True)
     A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
     
   err = A[n+1] - A[1]
@@ -224,7 +219,6 @@ def model_creator(batch_size, dtype=np.float32):
   model.initialize_global_vars = initialize_global_vars
 
   local_init_op = tf.group(*[v.initializer for v in local_vars])
-  print(local_vars)
   def initialize_local_vars():
     sess = tf.get_default_session()
     sess.run(X.initializer, feed_dict=init_dict)  # A's depend on X
@@ -247,9 +241,6 @@ if __name__ == '__main__':
   model.initialize_local_vars()
   
   kfac = Kfac(model_creator, dsize)   # creates another copy of model, initializes
-  # local variables
-
-  kfac.model.initialize_global_vars()
   kfac.model.initialize_local_vars()
   kfac.reset()    # resets optimization variables (not model variables)
   kfac.lr.set(LR)
@@ -274,10 +265,13 @@ if __name__ == '__main__':
   losses = []
   u.record_time()
 
+  start_time = time.time()
+
   for step in range(num_steps):
     loss0 = model.loss.eval()
     losses.append(loss0)
-    print("Step %d, Loss %.2f" %(step, loss0))
+    elapsed = time.time()-start_time
+    print("%d sec, step %d, loss %.2f" %(elapsed, step, loss0))
 
     if use_kfac:
       kfac.model.advance_batch()
@@ -308,14 +302,4 @@ if __name__ == '__main__':
     u.check_equal(losses, targets, rtol=1e-2)
     u.summarize_difference(losses, targets)
 
-  
-  # if len(sys.argv)>1 and sys.argv[1]=='record':
-  #   u.dump(losses, prefix+"_losses.csv")
-  #   sys.exit()
-
-
-  # targets = np.loadtxt("data/kfac_refactor_test7_losses.csv", delimiter=",")
-  # print("Difference is ", np.linalg.norm(np.asarray(losses)-targets))
-  # result = u.check_equal(losses, targets, rtol=1e-4)
-  # print("Test passed: %s" % (result,))
   

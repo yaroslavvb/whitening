@@ -912,9 +912,9 @@ def intersept_op_creation(op_type_name_to_intercept):
 
 
 global_variables = {}
-def get_variable(name, initializer, reuse):
-  """Lightweight replacement for tf.get_variable(). Doesn't need variable
-  scopes."""
+def get_variable(name, initializer, reuse=True):
+  """Lightweight replacement for tf.get_variable() for variables shared within
+  a single process. Doesn't need variable scopes."""
 
   global global_variables
   if name in global_variables and reuse:
@@ -924,7 +924,71 @@ def get_variable(name, initializer, reuse):
     #    print("Creating new variable %s into %s" %(name, v.op.name))
     global_variables[name] = v
   return v
+
+
+class VarStruct:
+  # TODO: refactor to behave more like variable
+  """Convenience structure to keep track of variable, its assign op
+  and assignment placeholder.
+
+  v = Var(6)
+  v.set(5)   # equivalent to sess.run(v.assign_op, feed_dict={pl: 5})
+  var.var    # returns underlying variable
+  var.val_   # placeholder to assign op
+  var.setter # assign op
+  var.set(6) # same as sess.run(var.setter, feed_dict={self.val_: val})
+  var.initialize()  # sets variable to initial value
+  """
+
+  # TODO: add names to placeholder op
+  def __init__(self, initial_value, name, dtype=None):
+
+    initial_value = np.array(initial_value)
+    assert u.is_numeric(initial_value), "Non-numeric type."
+    if not dtype:
+      dtype = initial_value.dtype
+    else:
+      initial_value = initial_value.astype(dtype)
+    self.initial_value = initial_value
+    self.val_ = tf.placeholder(dtype=initial_value.dtype,
+                               shape=initial_value.shape,
+                               name=name+"_holder")
+    self.var = tf.Variable(initial_value=self.val_, name=name, dtype=dtype)
+    assigned_name = self.var.op.name
+    if assigned_name != name:
+      print("Warning, conflicting variable %s"%(assigned_name,))
+    self.setter = self.var.assign(self.val_)
+
+  def set(self, val):
+    sess = tf.get_default_session()
+    sess.run(self.setter, feed_dict={self.val_: val})
+
+  def initialize(self):
+    sess.run(self.setter, feed_dict={self.val_: self.val})
+
+
+global_vars = {}
+def get_var(name, initializer, reuse=True):
+  """Global get_variable replacement for variables that need to be initialized
+  with a large numpy array.
   
+  a = tf.get_var([1,2,3])
+  a.var   # => gives tf.Variable
+  a.val
+  """
+
+  global global_vars
+  dtype = initializer.dtype
+  if name in global_vars and reuse:
+    vv = global_vars[name]
+    if (np.max(np.abs(vv.initial_value - initializer)))>np.finfo(dtype).eps:
+      print("Trying to reinitialize global variable %s with new"
+            " value, ignoring new value."%(name,))
+  else:
+    vv = VarStruct(initial_value=initializer, name=name)
+    global_vars[name] = vv
+  return vv
+
 def run_all_tests(module):
   all_functions = inspect.getmembers(module, inspect.isfunction)
   for name,func in all_functions:
@@ -970,6 +1034,7 @@ def capture_vars():
 
 def Print(op):
   return tf.Print(op, [op], op.name)
+
 
 def summarize_difference(source, target):
   source = np.asarray(source)

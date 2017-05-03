@@ -1,17 +1,12 @@
-do_early_init = True  # True if we want to initialize model vars as part of constructor
-dsize_inside_B = True    # for refactoring to use tf.gradients
+do_early_init = False  # True if we want to initialize model vars as part of constructor
 regularize_covariances = True  # add identity*lambda to covariance matrices
 
 inverse_methods = ["pseudo_inverse", "inverse"]
-inverse_method = "pseudo_inverse"
 inverse_method = "inverse"
+assert inverse_method in inverse_methods
 
-#dsize = 1000
 adaptive_step = False     # adjust step length based on predicted decrease
 step_rejection = False    # reject bad steps
-whitening_mode = 4        # TODO: get rid of this
-
-prefix="kfac3"
 
 import sys
 import numpy as np
@@ -19,14 +14,14 @@ import tensorflow as tf
 from collections import OrderedDict
 from collections import defaultdict
 
-dtype = np.float32
+dtype = np.float32   # TODO: factor out dtype to allow switching
 eps = np.finfo(dtype).eps # 1e-7 or 1e-16
 one = tf.ones((), dtype=dtype)
 
 import util as u
 import util
 from util import t  # transpose
-
+from util import VarStruct
 
 class Model:
   def __init__(self):
@@ -171,7 +166,7 @@ class VarList:
     assert len(self) == len(other)
     
     ops = []
-    if isinstance(weight, Var):
+    if isinstance(weight, VarStruct):
       weight = weight.var
       
     for (my_var, other_var) in zip(self.vars_, other.vars_):
@@ -184,25 +179,6 @@ class VarList:
     return self.vars_.__getitem__(key)
   def __len__(self):
     return self.vars_.__len__()
-
-# TODO: refactor to behave more like variable
-# TODO: inherit from Variable?
-class Var:
-  """Convenience structure to keep track of variable, it's assign op
-  and assignment placeholder together.
-
-  v = Var(tf.Variable())
-  v.set(5)   # equivalent to sess.run(v.assign_op, feed_dict={pl: 5})
-  var.var    # returns underlying variable
-  """
-  def __init__(self, initial_value, name):
-    self.var = tf.Variable(initial_value=initial_value, name=name)
-    self.val_ = tf.placeholder(dtype=self.var.dtype, shape=self.var.shape)
-    self.setter = self.var.assign(self.val_)
-
-  def set(self, val):  # TODO, overload =
-    sess = tf.get_default_session()
-    sess.run(self.setter, feed_dict={self.val_: val})
 
 def get_batch_size(data):
   if isinstance(data, IndexedGrad):
@@ -223,8 +199,7 @@ class Covariance():
       
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
-    # TODO: use u.get_variable for cov reuse. 
-    self.cov = tf.Variable(name=cov_name, initial_value=cov_op)
+    self.cov = u.get_variable(name=cov_name, initializer=cov_op)
     self.svd = u.SvdWrapper(target=self.cov, name=svd_name,
                             do_inverses=(inverse_method=='inverse'))
     self.cov_update_op = self.cov.initializer
@@ -262,8 +237,8 @@ class Kfac():
     # gradient with synthetic backprops
     s.grad2 = IndexedGrad(loss=s.model.loss2, vars_=s.model.trainable_vars)
 
-    s.lr = Var(-np.inf, "lr")
-    s.Lambda = Var(-np.inf, "Lambda")
+    s.lr = VarStruct(initial_value=-np.inf, name="lr", dtype=dtype)
+    s.Lambda = VarStruct(initial_value=-np.inf, name="Lambda", dtype=dtype)
     
     # covariance and SVD ops for all correctable ops, mapped to parameter
     # variable to correct
@@ -273,15 +248,13 @@ class Kfac():
       if not s.needs_correction(var):
         continue
       A = s.extract_A(s.grad2, var)
-      B2 = s.extract_B2(s.grad2, var)  # todo: change to extract_B
+      B2 = s.extract_B(s.grad2, var)  # todo: change to extract_B
       s.register_correction(var)
-      if dsize_inside_B:
-        dsize_op = tf.constant(dsize, dtype=dtype)
-        s[var].A = Covariance(A, var, "A", s.Lambda.var)
-        s[var].B2 = Covariance(B2*dsize_op, var, "B2", s.Lambda.var)
-      else:
-        s[var].A = Covariance(A, var, "A", s.Lambda.var)
-        s[var].B2 = Covariance(B2, var, "B2", s.Lambda.var)
+      dsize_op = tf.constant(dsize, dtype=dtype)
+      s[var].A = Covariance(A, var, "A", s.Lambda.var)
+      # dsize is already incorporated as part of backprop, so must
+      # multiply to get B's on the same scale as 
+      s[var].B2 = Covariance(B2*dsize_op, var, "B2", s.Lambda.var)
 
       
     s.grad_new = s.correct(s.grad)
@@ -335,31 +308,12 @@ class Kfac():
     assert op.op_def.name == 'MatMul'
     assert op.get_attr("transpose_a") == False
     assert op.get_attr("transpose_b") == True
-    if dsize_inside_B:
-      return op.inputs[0]
-    else:
-      return op.inputs[0]*dsize
+    return op.inputs[0]
 
 
   def extract_dW(self, grad, var):
     i = self.model.extra['W'].index(var)
     return self.model.extra['dW'][i]
-
-  def extract_B2(self, grad, var):
-    #    i = self.model.extra['W'].index(var)
-
-    assert var in matmul_registry
-    ii = list(grad).index(var)  # todo: refactor this to fetch from grad
-    grad_live = grad.live[ii]
-    op = grad_live.op
-    assert op.op_def.name == 'MatMul'
-    assert op.get_attr("transpose_a") == False
-    assert op.get_attr("transpose_b") == True
-    if dsize_inside_B:
-      return op.inputs[0]
-    else:
-      return op.inputs[0]*dsize
-  #    return self.model.extra['B2'][i]
 
 
    # https://docs.python.org/3/reference/datamodel.html?emulating-container-types#emulating-container-types
@@ -396,7 +350,7 @@ class Kfac():
     for var in s:
       ops.append(s[var].A.cov_update_op)
       ops.append(s[var].B2.cov_update_op)
-    s.sess.run(ops)
+    s.run(ops)
 
     # update SVDs
     corrected_vars = list(s)
@@ -404,14 +358,13 @@ class Kfac():
       s[var].A.svd.update()
       s[var].B2.svd.update()
 
-  def needs_correction(self, var):  # returns True if gradient of given var is
+  def needs_correction(self, var):
+    """Returns whether given variable is getting kfac corrected."""
     global matmul_registry
     if var in matmul_registry:
       return True
     else:
-      print("returning false for ", var)
-      return False  # (don't correct the input tensor)
-
+      return False
 
   def correct(self, grad):
     """Accepts IndexedGrad object, produces corrected version."""
@@ -420,18 +373,14 @@ class Kfac():
     vars_ = []
     grads_new = []
 
-    # gradient must come from the model
-    assert grad.vars_ == self.model.trainable_vars
+    assert list(grad) == self.model.trainable_vars
 
     dsize = get_batch_size(grad)
     
     for var in grad:
       vars_.append(var)
       A = s.extract_A(grad, var)    # extract activations
-      if dsize_inside_B:
-        B = s.extract_B(grad, var)*dsize    # extract backprops
-      else:
-        B = s.extract_B(grad, var)    # extract backprops
+      B = s.extract_B(grad, var)*dsize    # extract backprops
       if s.needs_correction(var):
         # correct the gradient. Assume op is left matmul
         A_svd = s[var].A.svd
@@ -453,66 +402,21 @@ class Kfac():
 
     return IndexedGrad(grads=grads_new, vars_=vars_)
 
-#   def correct_normalized(self, grad):
-#     """Accepts IndexedGrad object, produces corrected version normalized
-#     so that gradient norm is same as before."""
-#     s = self
-
-#     assert False
-#     vars_ = []
-#     grads_new = []
-
-#     # gradient must come from the model
-#     assert grad.vars_ == self.model.trainable_vars
-
-#     dsize = get_batch_size(grad)
-#     old_norm = tf.sqrt(u.L2(grad.f))
-    
-#     for var in grad:
-#       vars_.append(var)
-#       A = s.extract_A(grad, var)    # extract activations
-#       if dsize_inside_B:
-#         B = s.extract_B(grad, var)*dsize    # extract backprops
-#       else:
-#         B = s.extract_B(grad, var)    # extract backprops
-#       if s.needs_correction(var):
-#         # correct the gradient. Assume op is left matmul
-#         A_svd = s[var].A.svd
-#         B2_svd = s[var].B2.svd 
-#         if inverse_method == 'pseudo_inverse':
-#           A_new = u.pseudo_inverse2(A_svd) @ A
-#           B_new = u.pseudo_inverse2(B2_svd) @ B
-#         elif inverse_method == 'inverse':
-#           A_new = A_svd.inv @ A
-#           B_new = B2_svd.inv @ B
-#         else:
-#           assert False
-          
-#         dW_new = (B_new @ t(A_new)) / dsize
-#         grads_new.append(dW_new)
-#       else:  
-#         dW = B@t(A)/dsize   
-#         grads_new.append(dW)
-
-#     old_norm = tf.sqrt(u.L2(grad.f))
-#     new_norm = tf.sqrt(u.L2(u.flatten(grads_new)))
-#     ratio = old_norm/new_norm
-# #    ratio = tf.Print(ratio, [ratio], "ratio")
-#     ratio = u.Print(ratio)
-#     normalized_grads_new = [g*ratio for g in grads_new]
-    
-#     return IndexedGrad(grads=normalized_grads_new, vars_=vars_)
   
   def reset(self):
-    """Initialize/reset all optimization related variables."""
+    """Initialize/reset all optimization related variables.
+
+    This method initializes correction factors to identity and resets history
+    of the optimization.
+    """
     
     s = self
     s.step_counter = 0
+    
     # TODO: initialize first layer activations here, and not everywhere else
     #    self.model.initialize_local_vars()
     #    self.model.initialize_global_vars()
 
-    # todo: refactor this into util.SvdWrapper
     ops = []
 
     for var in self.model.trainable_vars:
@@ -521,7 +425,7 @@ class Kfac():
         B2_svd = s[var].B2.svd 
         ops.extend(A_svd.init_ops)
         ops.extend(B2_svd.init_ops)
-    self.run(ops)
+    s.run(ops)
 
 
   def adaptive_step(self):
@@ -587,13 +491,13 @@ class Kfac():
   def record(self, key, value):
     self.log.setdefault(key, []).append(value)
 
-  def set(self, variable, value):
-    s.run(variable.setter, feed_dict={variable.val_: value})
+  def set(self, var, value):
+    s.run(var.setter, feed_dict={var.val_: value})
 
   def run(self, *ops):
     new_ops = []
     for op in ops:
-      if isinstance(op, Var):
+      if isinstance(op, VarStruct):
         new_ops.append(op.var)
       else:
         new_ops.append(op)
