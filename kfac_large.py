@@ -3,11 +3,11 @@ import json
 import os
 import sys
 import time
-use_kfac = True
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
 parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
+parser.add_argument('--method', type=str, default="kfac", help='turn on KFAC')
 
 args = parser.parse_args()
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
@@ -22,7 +22,6 @@ else:
   num_steps = 10
   
 use_fixed_labels = True
-hack_global_init_dict = {}
 
 prefix="kfac_large"
 script_fn = sys.argv[0].split('.', 1)[0]
@@ -74,8 +73,6 @@ def ng_init(rows, cols):
 def model_creator(batch_size, dtype=np.float32):
   """Create MNIST autoencoder model. Dataset is part of model."""
 
-  global hack_global_init_dict
-  
   model = Model()
 
   init_dict = {}
@@ -88,7 +85,6 @@ def model_creator(batch_size, dtype=np.float32):
   # it's value, counterinituitive
   def init_var(val, name, is_global=False):
     """Helper to create variables with numpy or TF initial values."""
-    print("Initializing %s with dtype %s"%(name, val.dtype))
     if isinstance(val, tf.Tensor):
       var = u.get_variable(name=name, initializer=val, reuse=is_global)
     else:
@@ -238,7 +234,7 @@ def model_creator(batch_size, dtype=np.float32):
       to_initialize = global_init_ops
       
     if verbose:
-      print("Initializing following global variables:")
+      print("Initializing following:")
       for v in to_initialize:
         print("   " + v.name)
         
@@ -253,8 +249,6 @@ def model_creator(batch_size, dtype=np.float32):
     sess.run(local_init_op, feed_dict=init_dict)
   model.initialize_local_vars = initialize_local_vars
 
-  hack_global_init_dict = init_dict  # TODO: remove hack
-  
   return model
 
 if __name__ == '__main__':
@@ -281,18 +275,15 @@ if __name__ == '__main__':
   kfac.Lambda.set(LAMBDA)
 
   with u.capture_vars() as opt_vars:
-    if use_kfac:
+    if args.method=='kfac':
       opt = tf.train.AdamOptimizer(0.001)
     else:
       opt = tf.train.AdamOptimizer()
-      
     grads_and_vars = opt.compute_gradients(model.loss,
                                            var_list=model.trainable_vars)
     grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
     grad_new = kfac.correct(grad)
     train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
-    
-      
   [v.initializer.run() for v in opt_vars]
   
   losses = []
@@ -305,7 +296,7 @@ if __name__ == '__main__':
     elapsed = time.time()-start_time
     print("%d sec, step %d, loss %.2f" %(elapsed, step, loss0))
 
-    if use_kfac:
+    if args.method=='kfac':
       kfac.model.advance_batch()
       kfac.update_stats()
 
@@ -313,7 +304,6 @@ if __name__ == '__main__':
     grad.update()
     grad_new.update()
     train_op.run()
-    
     u.record_time()
 
   u.summarize_time()
