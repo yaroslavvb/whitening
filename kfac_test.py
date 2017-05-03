@@ -35,7 +35,7 @@ import numpy as np
 # TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
 purely_relu = False     # convert sigmoids into ReLUs
-regularized_svd = kfac_lib.regularized_svd
+regularized_svd = True # kfac_lib.regularized_svd # TODO: delete this
 
 
 # TODO: get rid
