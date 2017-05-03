@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import time
 use_kfac = True
 
 parser = argparse.ArgumentParser()
@@ -46,7 +47,7 @@ import numpy as np
 
 # TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
-purely_relu = False     # convert sigmoids into ReLUs
+purely_relu = True     # convert sigmoids into ReLUs
 
 regularized_svd = True # kfac_lib.regularized_svd # TODO: delete this
 
@@ -117,7 +118,7 @@ def model_creator(batch_size, dtype=np.float32):
     
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
   patches = train_images[:,:batch_size];
-  fs = [batch_size, 28*28, 196, 28*28]
+  fs = [batch_size, 28*28, 1024, 1024, 1024, 196, 1024, 1024, 1024, 28*28]
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
 
@@ -126,11 +127,13 @@ def model_creator(batch_size, dtype=np.float32):
   W.insert(0, X)
   A = [None]*(n+2)
   A[1] = W[0]
-  W0f_old = W_uniform(fs[2],fs[3]).astype(dtype) # to match previous generation
-  W0s_old = u.unflatten(W0f_old, fs[1:])   # perftodo: this creates transposes
   for i in range(1, n+1):
-    #    W[i] = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
-    W[i] = init_var(W0s_old[i-1], "W_%d"%(i,), is_global=True)
+    # TODO: must use tf.constant here, so init_var logic with feed_dict saving
+    # fails, remove tf.constant and debug
+    init_val2 = tf.constant(ng_init(f(i), f(i-1)).astype(dtype))
+
+    W[i] = init_var(init_val2, "W_%d"%(i,), is_global=True)
+    print(W[i].shape)
     A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
     
   err = A[n+1] - A[1]
@@ -233,7 +236,7 @@ if __name__ == '__main__':
   np.random.seed(0)
   tf.set_random_seed(0)
 
-  dsize = 1000
+  dsize = 10000
   sess = tf.InteractiveSession()
   model = model_creator(dsize) # TODO: share dataset between models?
   model.initialize_global_vars()
@@ -250,7 +253,7 @@ if __name__ == '__main__':
 
   with u.capture_vars() as opt_vars:
     if use_kfac:
-      opt = tf.train.AdamOptimizer(0.1)
+      opt = tf.train.AdamOptimizer(0.001)
     else:
       opt = tf.train.AdamOptimizer()
       
@@ -267,10 +270,12 @@ if __name__ == '__main__':
   losses = []
   u.record_time()
 
+  start_time = time.time()
   for step in range(num_steps):
     loss0 = model.loss.eval()
     losses.append(loss0)
-    print("Step %d, Loss %.2f" %(step, loss0))
+    elapsed = time.time()-start_time
+    print("%d sec, step %d, loss %.2f" %(elapsed, step, loss0))
 
     if use_kfac:
       kfac.model.advance_batch()
