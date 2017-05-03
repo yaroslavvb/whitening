@@ -8,10 +8,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
 parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
 parser.add_argument('--method', type=str, default="kfac", help='turn on KFAC')
-parser.add_argument('--fixed_labels', type=int, default=1,
+parser.add_argument('--fixed_labels', type=int, default=0,
                     help='if true, fix synthetic labels to all 1s')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate to use')
+parser.add_argument('--validate_every_n', type=int, default=10,
+                    help='set to positive number to measure validation')
 parser.add_argument('--Lambda', type=float, default=0.1,
                     help='lambda value')
 
@@ -21,7 +23,7 @@ print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) #
 use_tikhonov=False
 
 if args.mode == 'run':
-  num_steps = 100
+  num_steps=10000
   LR=args.lr
   LAMBDA=args.Lambda
   use_fixed_labels = args.fixed_labels
@@ -132,6 +134,9 @@ def model_creator(batch_size, dtype=np.float32):
     
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(dtype)
   patches = train_images[:,:batch_size];
+  test_patches = train_images[:,-batch_size:]
+  assert dsize<25000
+
   fs = [batch_size, 28*28, 1024, 1024, 1024, 196, 1024, 1024, 1024, 28*28]
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
@@ -147,6 +152,13 @@ def model_creator(batch_size, dtype=np.float32):
     A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
     
   err = A[n+1] - A[1]
+
+  # create test error eval
+  layer = init_var(test_patches, "X_test", is_global=False)
+  for i in range(1, n+1):
+    layer = nonlin(W[i] @ layer)
+  verr = (layer - test_patches)
+  model.vloss = u.L2(verr) / (2 * batch_size)
 
   # manually compute backprop to use for sanity checking
   B = [None]*(n+1)
@@ -276,7 +288,6 @@ if __name__ == '__main__':
   
   kfac = Kfac(model_creator, dsize)   # creates another copy of model, initializes
 
-
   kfac.model.initialize_global_vars(verbose=True)
   kfac.model.initialize_local_vars()
   kfac.reset()    # resets optimization variables (not model variables)
@@ -287,7 +298,7 @@ if __name__ == '__main__':
     if args.mode != 'run':
       opt = tf.train.AdamOptimizer(0.001)
     else:
-      opt = tf.train.AdamOptimizer(0.001)
+      opt = tf.train.AdamOptimizer(LR)
       
     grads_and_vars = opt.compute_gradients(model.loss,
                                            var_list=model.trainable_vars)
@@ -300,11 +311,23 @@ if __name__ == '__main__':
   u.record_time()
 
   start_time = time.time()
+  vloss0 = 0
+  
+  outfn = 'data/%s_%f_%f.csv'%(prefix, args.lr, args.Lambda)
+
+  start_time = time.time()
   for step in range(num_steps):
-    loss0 = model.loss.eval()
-    losses.append(loss0)
+    if args.validate_every_n and step%args.validate_every_n == 0:
+      loss0, vloss0 = sess.run([model.loss, model.vloss])
+    else:
+      loss0, = sess.run([model.loss])
+
     elapsed = time.time()-start_time
-    print("%d sec, step %d, loss %.2f" %(elapsed, step, loss0))
+    print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,
+                                                     vloss0))
+
+    with open(outfn, "a") as myfile:
+      myfile.write('%d, %f, %f, %f\n'%(step, elapsed, loss0, vloss0))
 
     if args.method=='kfac':
       kfac.model.advance_batch()

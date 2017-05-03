@@ -27,6 +27,7 @@ class Model:
   def __init__(self):
     self.loss = None            # loss
     self.loss2 = None           # loss wrt synthetic labels
+    self.vloss = None           # validation loss (fixed data baked into model)
     self.advance_batch = None   # function that advances batch
     self.global_vars = []       # all global variables of the model
     self.local_vars = []        # all local variables of the model
