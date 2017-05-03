@@ -8,20 +8,29 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
 parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
 parser.add_argument('--method', type=str, default="kfac", help='turn on KFAC')
+parser.add_argument('--fixed_labels', type=int, default=1,
+                    help='if true, fix synthetic labels to all 1s')
+parser.add_argument('--lr', type=float, default=0.001,
+                    help='learning rate to use')
+parser.add_argument('--Lambda', type=float, default=0.1,
+                    help='lambda value')
 
 args = parser.parse_args()
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
 
-LR=0.02  # TODO: two places to set lr
-LAMBDA=1e-1
 use_tikhonov=False
 
 if args.mode == 'run':
   num_steps = 100
+  LR=args.lr
+  LAMBDA=args.Lambda
+  use_fixed_labels = args.fixed_labels
 else:
   num_steps = 10
-  
-use_fixed_labels = True
+#  LR=0.001
+  LAMBDA=1e-1
+  use_fixed_labels = True
+  args.seed = 1
 
 prefix="kfac_large"
 script_fn = sys.argv[0].split('.', 1)[0]
@@ -271,14 +280,15 @@ if __name__ == '__main__':
   kfac.model.initialize_global_vars(verbose=True)
   kfac.model.initialize_local_vars()
   kfac.reset()    # resets optimization variables (not model variables)
-  kfac.lr.set(LR)
+  #  kfac.lr.set(LR)  # this is only used for adaptive_step
   kfac.Lambda.set(LAMBDA)
 
   with u.capture_vars() as opt_vars:
-    if args.method=='kfac':
+    if args.mode != 'run':
       opt = tf.train.AdamOptimizer(0.001)
     else:
-      opt = tf.train.AdamOptimizer()
+      opt = tf.train.AdamOptimizer(0.001)
+      
     grads_and_vars = opt.compute_gradients(model.loss,
                                            var_list=model.trainable_vars)
     grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
