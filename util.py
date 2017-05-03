@@ -9,6 +9,11 @@ import tensorflow as tf
 import time
 import traceback
 
+# shortcuts to refer to util module, this lets move external code into
+# this module unmodified
+util = sys.modules[__name__]   
+u = util
+
 default_dtype = tf.float32
 USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 DUMP_BAD_SVD=False                 # when SVD fails, dump matrix to temp
@@ -638,6 +643,22 @@ def disable_shape_inference():
 def enable_shape_inference():
   ops.set_shapes_for_outputs = original_shape_func
 
+
+def dump_with_prompt(result, fname):
+  """Helper function to ask for confirmation before overwriting."""
+  location = os.getcwd()+"/data/"+fname  # TODO: factor out locations logic
+  if os.path.exists(location):
+    answer = input("%s exists, overwrite? (Y/n) "%(location,))
+    if not answer:
+      answer = "y"
+    if answer.lower() != "y":
+      print("skipping")
+    else:
+      u.dump(result, fname)
+  else:
+    u.dump(result, fname)
+    
+
 def dump(result, fname):
   """Save result to file."""
   result = result.eval() if hasattr(result, "eval") else result
@@ -934,8 +955,7 @@ def capture_ops():
 def capture_vars():
   """Decorator to capture global variables created in the block.
   """
-
-
+  
   micros = int(time.time()*10**6)
   scope_name = "capture_vars_"+str(micros)
   op_list = []
