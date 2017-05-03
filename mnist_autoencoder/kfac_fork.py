@@ -3,29 +3,41 @@
 # _live means it's used to update a variable value
 # var, var_set, var_p give variable, assign op, placeholder op
 
-# todo: replace all parts of whitening with svd
-# run for longer
-# replace svd with scipy svd
+# things to try: get distributions of singular values in each layer
+# as well as gradient coordinates as optimization progresses
+
+# todo: run for longer
+# todo: replace svd with scipy svd
+
+# experiment prefixes
+#prefix="svdtf" # 11:30 Apr 19
+prefix="svdmkl"
+prefix="svdmkl2"
 
 use_preconditioner = True
 adaptive_step = False
 drop_l2 = True
 drop_sparsity = True
-use_gpu = False
+use_gpu = True
 do_line_search = False
 intersept_op_creation = False
 
 import sys
-#whitening_mode = int(sys.argv[1])
-whitening_mode=3
-whiten_every_n_steps = 1
+whitening_mode = int(sys.argv[1])
+#whitening_mode=0
+whiten_every_n_steps = 10
 natural_samples = 1
-line_search_frequency = 2
+adaptive_step_frequency = 10
+adaptive_step_burn_in = 100 # let optimization go for a bit first
+report_frequency = 10
+
+USE_MKL_SVD=True
 
 import networkx as nx
 import load_MNIST
 import numpy as np
 import scipy.io # for loadmat
+from scipy import linalg # for svd
 import matplotlib # for matplotlib.cm.gray
 from matplotlib.pyplot import imshow
 import math
@@ -125,16 +137,36 @@ class SvdWrapper:
       self.cached.v.assign(self.tf_svd.v)
     )
 
+    self.update_external_op = tf.group(
+      self.cached.s.assign(self.holder.s),
+      self.cached.u.assign(self.holder.u),
+      self.cached.v.assign(self.holder.v)
+    )
+
     self.init_ops = (self.s.initializer, self.u.initializer, self.v.initializer)
   
+
+  def update(self):
+    if USE_MKL_SVD:
+      self.update_scipy()
+    else:
+      self.update_tf()
+      
   def update_tf(self):
     sess = tf.get_default_session()
     sess.run(self.update_tf_op)
     
   def update_scipy(self):
     sess = tf.get_default_session()
-    assert False
-    sess.run(self.update_tf_op)
+    target0 = self.target.eval()
+    # A=u.diag(s).v', singular vectors are columns
+    u0, s0, vt0 = linalg.svd(target0)
+    v0 = vt0.T
+    #    v0 = vt0 # bug, makes loss increase, use for sanity checks
+    feed_dict = {self.holder.u: u0,
+                 self.holder.v: v0,
+                 self.holder.s: s0}
+    sess.run(self.update_external_op, feed_dict=feed_dict)
 
     
 def W_uniform(s1, s2):
@@ -146,7 +178,9 @@ def W_uniform(s1, s2):
 if __name__=='__main__':
   np.random.seed(0)
   tf.set_random_seed(0)
+  
   dtype = np.float32
+  machine_epsilon = 1e-8  # half distance between 1 and 1+ulp
   u.default_dtype = dtype
   
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
@@ -165,7 +199,7 @@ if __name__=='__main__':
   n = len(fs) - 2
 
   init_dict = {}     # {var_placeholder: init_value}
-  var_dict = {}      # {var: VarInfo}
+  vard = {}      # {var: VarInfo}
   def init_var(val, name, trainable=False, noinit=False):
     if isinstance(val, tf.Tensor):
       collections = [] if noinit else None
@@ -178,7 +212,7 @@ if __name__=='__main__':
       init_dict[holder] = val
     var_p = tf.placeholder(var.dtype, var.shape)
     var_setter = var.assign(var_p)
-    var_dict[var] = VarInfo(var_setter, var_p)
+    vard[var] = VarInfo(var_setter, var_p)
     return var
 
   lr = init_var(0.2, "lr")
@@ -244,20 +278,23 @@ if __name__=='__main__':
     vars_svd_A[i] = SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     whitened_A = u.pseudo_inverse_sqrt2(vars_svd_A[i]) @ A[i]
+    # raise epsilon because b's get weird
     whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i]) @ B[i]
+    if i==1:  # special handling for B2
+      whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i],eps=1e-3) @ B[i]
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
     dW[i] = (B[i] @ t(A[i]))/dsize
 
-  # Cost function
+  # Loss function
   reconstruction = u.L2(err) / (2 * dsize)
   sparsity = beta * tf.reduce_sum(kl(rho, rho_hat))
   L2 = (lambda_ / 2) * (u.L2(W[1]) + u.L2(W[1]))
 
-  cost = reconstruction
+  loss = reconstruction
   if not drop_l2:
-    cost = cost + L2
+    loss = loss + L2
   if not drop_sparsity:
-    cost = cost + sparsity
+    loss = loss + sparsity
 
   grad_live = u.flatten(dW[1:])
   pre_grad_live = u.flatten(pre_dW[1:]) # preconditioned gradient
@@ -268,6 +305,12 @@ if __name__=='__main__':
   save_params_op = Wf_copy.assign(Wf).op
   pre_grad_dot_grad = tf.reduce_sum(pre_grad*grad)
 
+  def dump_svd_info(step):
+    for i in range(1, n+1):
+      s0 = vars_svd_A[i].s.eval()
+      u.dump(s0, "A_%d_%d"%(i, step))
+      
+    
   def advance_batch():
     sess.run(sampled_labels.initializer)  # new labels for next call
 
@@ -278,11 +321,11 @@ if __name__=='__main__':
 
   def update_svds():
     if whitening_mode>1:
-      vars_svd_A[2].update_tf()
+      vars_svd_A[2].update()
     if whitening_mode>2:
-      vars_svd_B2[2].update_tf()
+      vars_svd_B2[2].update()
     if whitening_mode>3:
-      vars_svd_B2[1].update_tf()
+      vars_svd_B2[1].update()
 
   def init_svds():
     ops = []
@@ -307,7 +350,7 @@ if __name__=='__main__':
   u.reset_time()
 
   step_lengths = []
-  costs = []
+  losses = []
   ratios = []
   
   # adaptive line search parameters
@@ -323,7 +366,7 @@ if __name__=='__main__':
 
   # only update whitening matrix of input activations in the beginning
   if whitening_mode>0:
-    vars_svd_A[1].update_tf()
+    vars_svd_A[1].update()
     
   def line_search(initial_value, direction, step, num_steps):
     saved_val = tf.Variable(Wf)
@@ -333,11 +376,11 @@ if __name__=='__main__':
     vals = []
     for i in range(num_steps):
       sess.run(assign_op, feed_dict={pl: i})
-      vals.append(cost.eval())
+      vals.append(loss.eval())
     sess.run(Wf.assign(saved_val)) # restore original value
     return vals
     
-  for i in range(5):
+  for i in range(1000):
     sess.run(grad.initializer)
     sess.run(pre_grad.initializer)
     update_covariances()
@@ -345,16 +388,16 @@ if __name__=='__main__':
     if i%whiten_every_n_steps==0:
       update_svds()
     
-    lr0, cost0 = sess.run([lr, cost])
+    lr0, loss0 = sess.run([lr, loss])
     save_params_op.run()
     update_params_op.run()
-    cost1 = cost.eval()
+    loss1 = loss.eval()
 
     advance_batch()
     
     target_slope = -pre_grad_dot_grad.eval()
     target_delta = lr0*target_slope
-    actual_delta = cost1 - cost0
+    actual_delta = loss1 - loss0
     actual_slope = actual_delta/lr0
     # occasionally see slope ratio 1.01, due to floating point?
     slope_ratio = abs(actual_slope)/abs(target_slope) 
@@ -365,25 +408,26 @@ if __name__=='__main__':
       u.dump(vals1, "line1-%d"%(i,))
       u.dump(vals2, "line2-%d"%(i,))
       
-    costs.append(cost0)
+    losses.append(loss0)
     step_lengths.append(lr0)
     ratios.append(slope_ratio)
 
-    print("Step %d cost %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f"%(i, cost0, target_delta, actual_delta, slope_ratio))
+    if i % report_frequency == 0:
+      print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f"%(i, loss0, target_delta, actual_delta, slope_ratio))
     
     # don't shrink learning rate once results are very close to minimum
-    if i>0 and i % line_search_frequency == 0:
+    if adaptive_step_frequency and adaptive_step and i>adaptive_step_burnin:
       if slope_ratio < alpha and abs(target_delta)>1e-6 and adaptive_step:
-        print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
+        print("%.2f %.2f %.2f"%(loss0, loss1, slope_ratio))
         print("Slope optimality %.2f, shrinking learning rate to %.2f"%(slope_ratio, lr0*beta,))
-        sess.run(lr_set, feed_dict={lr_p: lr0*beta})
-      else:   # grow learning rate
-        # .99 was ideal for gradient
-        if i>0 and i%50 == 0 and slope_ratio>0.90 and adaptive_step:
-          print("%.2f %.2f %.2f"%(cost0, cost1, slope_ratio))
+        sess.run(vard[lr].setter, feed_dict={vard[lr].p: lr0*beta})
+        
+      # grow learning rate, .99 was ideal for gradient
+      elif i>0 and i%50 == 0 and slope_ratio>0.90 and adaptive_step:
+          print("%.2f %.2f %.2f"%(loss0, loss1, slope_ratio))
           print("Growing learning rate to %.2f"%(lr0*growth_rate))
-          sess.run(var_dict[lr].setter, feed_dict={var_dict[lr].p:
-                                                   lr0*growth_rate})
+          sess.run(vard[lr].setter, feed_dict={vard[lr].p:
+                                               lr0*growth_rate})
 
     u.record_time()
 
@@ -394,6 +438,8 @@ if __name__=='__main__':
   else:
     #    u.dump(costs, "linux5.csv")
     targets = np.loadtxt("data/linux5.csv", delimiter=",")
-    
-  u.check_equal(costs[:5], targets[:5])
+
+  u.dump(losses, "%s_losses_%d.csv"%(prefix ,whitening_mode,))
+  u.dump(step_lengths, "%s_step_lengths_%d.csv"%(prefix, whitening_mode,))
+  u.dump(ratios, "%s_ratios_%d.csv"%(prefix, whitening_mode,))
   u.summarize_time()

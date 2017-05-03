@@ -47,6 +47,11 @@ prefix="instability9"  # higher epsilon
 prefix="instability10" # looking at line search at bad slope
 prefix="instability11" # use sqrt of fisher instead of regular fisher
 prefix="instability12" # use -0.99 instead of -1
+prefix="tim_exp1" # regular inverse
+prefix="tim_exp3" # regularized
+prefix="tim_exp2" # sqrt
+prefix="hi" # sqrt
+prefix="gradnorms" # sqrt
 
 # whitening_mode=3 explodes on step 7
 # TODO: try propagating identity vectors instead of gaussian
@@ -61,7 +66,7 @@ intersept_op_creation = False
 
 import sys
 #whitening_mode = int(sys.argv[1])
-whitening_mode=3
+whitening_mode=4
 whiten_every_n_steps = 1
 natural_samples = 1
 adaptive_step_frequency = 10
@@ -318,12 +323,15 @@ if __name__=='__main__':
     cov_B2[i] = init_var(B2[i]@t(B2[i])/dsize, "cov_B2%d"%(i,))
     vars_svd_A[i] = SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
+    whitened_A = u.regularized_inverse(cov_A[i]) @ A[i]
+    whitened_A = u.pseudo_inverse_sqrt2(vars_svd_A[i],eps=eps_to_use) @ A[i]
     whitened_A = u.pseudo_inverse2(vars_svd_A[i],eps=eps_to_use)@A[i]
-    #whitened_A = u.pseudo_inverse_sqrt2(vars_svd_A[i],eps=eps_to_use) @ A[i]
     #whitened_A = u.pseudo_inverse_scipy(cov_A[i]) @ A[i]
     # raise epsilon because b's get weird
-    #whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i], eps=eps_to_use) @ B[i]
     #    whitened_B2 = u.pseudo_inverse_scipy(cov_B2[i]) @ B[i]
+    whitened_B2 = u.pseudo_inverse_scipy(cov_B2[i]) @ B[i]
+    whitened_B2 = u.regularized_inverse(cov_B2[i]) @ B[i]
+    whitened_B2 = u.pseudo_inverse_sqrt2(vars_svd_B2[i], eps=eps_to_use) @ B[i]
     whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i], eps=eps_to_use)@B[i]
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/dsize
     dW[i] = (B[i] @ t(A[i]))/dsize
@@ -414,6 +422,8 @@ if __name__=='__main__':
   step_lengths = []
   losses = []
   ratios = []
+  grad_norms = []
+  pre_grad_norms = []
   
   # adaptive line search parameters
   alpha=0.3   # acceptable fraction of predicted decrease
@@ -442,7 +452,7 @@ if __name__=='__main__':
     sess.run(Wf.assign(saved_val)) # restore original value
     return vals
     
-  for i in range(20):  # todo: rename i to step
+  for i in range(100):  # todo: rename i to step
     update_covariances()
     if i%whiten_every_n_steps==0:
       update_svds()
@@ -477,6 +487,8 @@ if __name__=='__main__':
 
     if i % report_frequency == 0:
       print("Step %d loss %.2f, target decrease %.3f, actual decrease, %.3f ratio %.2f grad norm: %.2f pregrad norm: %.2f"%(i, loss0, target_delta, actual_delta, slope_ratio, grad_norm.eval(), pre_grad_norm.eval()))
+    grad_norms.append(grad_norm.eval())
+    pre_grad_norms.append(pre_grad_norm.eval())
     
     # don't shrink learning rate once results are very close to minimum
     if adaptive_step_frequency and adaptive_step and i>adaptive_step_burnin:
@@ -505,4 +517,6 @@ if __name__=='__main__':
   u.dump(losses, "%s_losses_%d.csv"%(prefix ,whitening_mode,))
   u.dump(step_lengths, "%s_step_lengths_%d.csv"%(prefix, whitening_mode,))
   u.dump(ratios, "%s_ratios_%d.csv"%(prefix, whitening_mode,))
+  u.dump(grad_norms, "%s_grad_norms_%d.csv"%(prefix, whitening_mode,))
+  u.dump(pre_grad_norms, "%s_pre_grad_norms_%d.csv"%(prefix, whitening_mode,))
   u.summarize_time()
