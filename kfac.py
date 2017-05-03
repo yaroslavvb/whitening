@@ -406,7 +406,6 @@ class Kfac():
 
   def needs_correction(self, var):  # returns True if gradient of given var is
     global matmul_registry
-    assert len(self.model.trainable_vars) == 2
     if var in matmul_registry:
       return True
     else:

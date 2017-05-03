@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 import time
@@ -6,27 +7,26 @@ use_kfac = True
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
+parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
 
 args = parser.parse_args()
+print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
 
-LR=0.02
+LR=0.02  # TODO: two places to set lr
 LAMBDA=1e-1
 use_tikhonov=False
-# Use lambda for small batch
-#Lambda = 2*1e-1
-#Lambda = 1e-3
-#Lambda=1e8
-#Lambda = 10
 
-if args.mode == 'record' or args.mode == 'test':
-  num_steps = 10
-else:
+if args.mode == 'run':
   num_steps = 100
+else:
+  num_steps = 10
   
 use_fixed_labels = True
 hack_global_init_dict = {}
 
-prefix="kfac_adam"
+prefix="kfac_large"
+script_fn = sys.argv[0].split('.', 1)[0]
+assert prefix.startswith(script_fn)
 
 # Test implementation of KFAC on MNIST
 import load_MNIST
@@ -44,6 +44,10 @@ import kfac
 import sys
 import tensorflow as tf
 import numpy as np
+
+
+rng = np.random.RandomState(args.seed)
+tf.set_random_seed(args.seed)
 
 # TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
@@ -228,7 +232,7 @@ def model_creator(batch_size, dtype=np.float32):
     sess.run(local_init_op, feed_dict=init_dict)
   model.initialize_local_vars = initialize_local_vars
 
-  hack_global_init_dict = init_dict
+  hack_global_init_dict = init_dict  # TODO: remove hack
   
   return model
 
@@ -236,14 +240,18 @@ if __name__ == '__main__':
   np.random.seed(0)
   tf.set_random_seed(0)
 
-  dsize = 10000
+  if args.mode == 'run':
+    dsize = 10000
+  else:
+    dsize = 1000
+    
   sess = tf.InteractiveSession()
   model = model_creator(dsize) # TODO: share dataset between models?
   model.initialize_global_vars()
   model.initialize_local_vars()
   
   kfac = Kfac(model_creator, dsize)   # creates another copy of model, initializes
-  # local variables
+
 
   kfac.model.initialize_global_vars()
   kfac.model.initialize_local_vars()
@@ -261,7 +269,6 @@ if __name__ == '__main__':
                                            var_list=model.trainable_vars)
     grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
     grad_new = kfac.correct(grad)
-    #    grad_new = kfac.correct_normalized(grad)
     train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
     
       
@@ -292,21 +299,13 @@ if __name__ == '__main__':
   
   losses_fn = '%s_losses_test.csv' %(prefix,)
   if args.mode == 'record':
-    if os.path.exists('data/'+losses_fn):
-      answer = input("%s exists, overwrite? (Y/n) "%(losses_fn,))
-      if not answer:
-        answer = "y"
-      if answer.lower() != "y":
-        print("Exiting")
-        sys.exit()
-    u.dump(losses, losses_fn)
+    u.dump_with_prompt(losses, losses_fn)
 
   elif args.mode == 'test':
     targets = np.loadtxt("data/"+losses_fn, delimiter=",")
     u.check_equal(losses, targets, rtol=1e-2)
     u.summarize_difference(losses, targets)
 
-  
   # if len(sys.argv)>1 and sys.argv[1]=='record':
   #   u.dump(losses, prefix+"_losses.csv")
   #   sys.exit()
