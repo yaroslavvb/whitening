@@ -129,8 +129,15 @@ def model_creator(batch_size, dtype=np.float32):
   W0f_old = W_uniform(fs[2],fs[3]).astype(dtype) # to match previous generation
   W0s_old = u.unflatten(W0f_old, fs[1:])   # perftodo: this creates transposes
   for i in range(1, n+1):
-    #    W[i] = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
-    W[i] = init_var(W0s_old[i-1], "W_%d"%(i,), is_global=True)
+    #    temp = init_var(ng_init(f(i), f(i-1)), "W_%d"%(i,), is_global=True)
+    init_val1 = W0s_old[i-1]
+
+    # TODO: must use tf.constant here, so init_var logic with feed_dict saving
+    # fails, remove tf.constant and debug
+    init_val2 = tf.constant(ng_init(f(i), f(i-1)).astype(dtype))
+
+    W[i] = init_var(init_val2, "W_%d"%(i,), is_global=True)
+    print(W[i].shape)
     A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
     
   err = A[n+1] - A[1]
