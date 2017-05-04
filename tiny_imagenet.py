@@ -10,95 +10,135 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation, Flatten
 from keras.layers import Convolution2D, MaxPooling2D
 from keras.utils import np_utils
+from keras.models import Sequential
+from keras.layers import Dense
+from keras import callbacks
+from keras import metrics
+import os
+import time
+import argparse
+import sys
 
-batch_size = 32
-nb_classes = 10
-nb_epoch = 200
-data_augmentation = True
-
-# input image dimensions
-img_rows, img_cols = 32, 32
-# the CIFAR10 images are RGB
-img_channels = 3
-
-# the data, shuffled and split between train and test sets
-(X_train, y_train), (X_test, y_test) = cifar10.load_data()
-print('X_train shape:', X_train.shape)
-print(X_train.shape[0], 'train samples')
-print(X_test.shape[0], 'test samples')
-X_train = X_train.astype('float32')
-X_test = X_test.astype('float32')
-X_train /= 255
-X_test /= 255
-
-# convert class vectors to binary class matrices
-Y_train = np_utils.to_categorical(y_train, nb_classes)
-Y_test = np_utils.to_categorical(y_test, nb_classes)
-
-model = Sequential()
-
-model.add(Convolution2D(32, 3, 3, border_mode='same',
-                        input_shape=X_train.shape[1:]))
-model.add(Activation('relu'))
-model.add(Convolution2D(32, 3, 3))
-model.add(Activation('relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-
-model.add(Convolution2D(64, 3, 3, border_mode='same'))
-model.add(Activation('relu'))
-model.add(Convolution2D(64, 3, 3))
-model.add(Activation('relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-
-model.add(Flatten())
-model.add(Dense(512))
-model.add(Activation('relu'))
-model.add(Dropout(0.5))
-model.add(Dense(nb_classes))
-model.add(Activation('softmax'))
-
-# let's train the model using SGD + momentum (how original). EDIT: now with weight normalization, so slightly more original ;-)
 from weightnorm import SGDWithWeightnorm
-sgd_wn = SGDWithWeightnorm(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-model.compile(loss='categorical_crossentropy',optimizer=sgd_wn,metrics=['accuracy'])
+from weightnorm import AdamWithWeightnorm
 
-# data based initialization of parameters
-from weightnorm import data_based_init
-data_based_init(model, X_train[:100])
+import util as u
+import numpy as np
+import tensorflow as tf
+import scipy
+
+prefix = "keras_cifar_sgd"  # sgd wn
+prefix = "keras_cifar_adam"  # adam wn
+prefix = "keras_cifar_adamx4"  # adam wn with 4x larger bs
+prefix = "keras_cifar_adamx16"  # adam wn with 16x larger bs
+prefix = "keras_cifar_adamx256"  # adam wn with 64x larger bs
+
+# second round of exp without shuffling
+prefix = "keras_cifar2_adam"  # adam wn
+prefix = "keras_cifar2_adamx4"  # adam wn with 4x larger bs
+prefix = "keras_cifar2_adamx16"  # adam wn with 16x larger bs
+prefix = "keras_cifar2_adamx256"  # adam wn with 64x larger bs
+
+class TestCallback(callbacks.Callback):
+  
+  def __init__(self, data_train, data_test, fn):
+    print("Creating callback")
+    self.data_train = data_train
+    self.data_test = data_test
+    self.losses_train = []
+    self.losses_test = []
+    self.times = []
+    self.fn = fn
+    self.write_buffer = []
+    self.last_save_ts = 0
+    self.start_time = time.time()
 
 
-if not data_augmentation:
-    print('Not using data augmentation.')
-    model.fit(X_train, Y_train,
-              batch_size=batch_size,
-              nb_epoch=nb_epoch,
-              validation_data=(X_test, Y_test),
-              shuffle=True)
-else:
-    print('Using real-time data augmentation.')
+  def on_epoch_end(self, epoch, logs={}):
+    x_test, y_test = self.data_test
+    x_train, y_train = self.data_train
+    pixel_loss_test, acc1 = self.model.evaluate(x_test, y_test, verbose=0)
+    pixel_loss_train, acc2 = self.model.evaluate(x_train, y_train, verbose=0)
+    loss_test = pixel_loss_test*input_dim
+    loss_train = pixel_loss_train*input_dim
+    self.losses_train.append(loss_train)
+    self.losses_test.append(loss_test)
+    
+    host = u.get_host_prefix()  # 10 for 10.cirrascale
+    outfn = 'data/%s_%s'%(host, self.fn)
 
-    # this will do preprocessing and realtime data augmentation
-    datagen = ImageDataGenerator(
-        featurewise_center=False,  # set input mean to 0 over the dataset
-        samplewise_center=False,  # set each sample mean to 0
-        featurewise_std_normalization=False,  # divide inputs by std of the dataset
-        samplewise_std_normalization=False,  # divide each input by its std
-        zca_whitening=False,  # apply ZCA whitening
-        rotation_range=0,  # randomly rotate images in the range (degrees, 0 to 180)
-        width_shift_range=0.1,  # randomly shift images horizontally (fraction of total width)
-        height_shift_range=0.1,  # randomly shift images vertically (fraction of total height)
-        horizontal_flip=True,  # randomly flip images
-        vertical_flip=False)  # randomly flip images
+    if epoch == 0:
+      os.system("rm -f "+outfn)
+    elapsed = time.time()-self.start_time
+    print('\n%d sec: Loss train: %.2f'%(elapsed,loss_train))
+    print('%d sec: Loss test: %.2f'%(elapsed,loss_test))
+    info_line = '%d, %f, %f, %f\n'%(epoch, elapsed, loss_train, loss_test)
+    print(info_line[:-1])
+    self.write_buffer.append(info_line)
+    if time.time() - self.last_save_ts > 5*60:
+      self.last_save_ts = time.time()
+      with open(outfn, "a") as myfile:
+        for line in self.write_buffer:
+          myfile.write(line)
+        self.write_buffer = []
 
-    # compute quantities required for featurewise normalization
-    # (std, mean, and principal components if ZCA whitening is applied)
-    datagen.fit(X_train)
+          
+if __name__=='__main__':
+  np.random.seed(0)
+  tf.set_random_seed(0)
 
-    # fit the model on the batches generated by datagen.flow()
-    model.fit_generator(datagen.flow(X_train, Y_train,
-                        batch_size=batch_size),
-                        samples_per_epoch=X_train.shape[0],
-                        nb_epoch=nb_epoch,
-                        validation_data=(X_test, Y_test))
+  if prefix.endswith('x256'):
+    batch_size = 32*64
+  elif prefix.endswith('x16'):
+    batch_size = 32*16
+  elif prefix.endswith('x4'):
+    batch_size = 32*4
+  else:
+    batch_size = 32*4
+  nb_classes = 10
+  nb_epoch = 20000
+  data_augmentation = False
+
+  # the data, shuffled and split between train and test sets
+  (X_train, y_train), (X_test, y_test) = cifar10.load_data()
+  dsize = X_train.shape[0]
+  print('X_train shape:', X_train.shape)
+  print(X_train.shape[0], 'train samples')
+  print(X_test.shape[0], 'test samples')
+  X_train = X_train.astype('float32')
+  print(X_train.shape)
+  X_train = X_train.reshape((X_train.shape[0], -1))
+  X_test = X_test.astype('float32')
+  X_test = X_test.reshape((X_test.shape[0], -1))
+  X_train /= 255
+  X_test /= 255
+
+
+  input_dim = 32*32*3
+  model = Sequential()
+  model.add(Dense(1024, input_dim=input_dim, activation='relu'))
+  model.add(Dense(1024, activation='relu'))
+  model.add(Dense(1024, activation='relu'))
+  model.add(Dense(196, activation='relu'))
+  model.add(Dense(1024, activation='relu'))
+  model.add(Dense(1024, activation='relu'))
+  model.add(Dense(1024, activation='relu'))
+  model.add(Dense(input_dim, activation='relu'))
+
+  #sgd_wn = SGDWithWeightnorm(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+  sgd_wn = AdamWithWeightnorm()
+  model.compile(loss='mean_squared_error',optimizer=sgd_wn,
+                metrics=[metrics.mean_squared_error])
+  cb = TestCallback((X_train, X_train), (X_test,X_test), prefix)
+
+  # data based initialization of parameters
+  from weightnorm import data_based_init
+  data_based_init(model, X_train[:100])
+
+
+  model.fit(X_train, X_train,
+            batch_size=batch_size,
+            epochs=nb_epoch,
+            validation_data=(X_test, X_test),
+            callbacks=[cb],
+            shuffle=False)
