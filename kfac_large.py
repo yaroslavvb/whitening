@@ -321,6 +321,7 @@ if __name__ == '__main__':
       loss0, vloss0 = sess.run([model.loss, model.vloss])
     else:
       loss0, = sess.run([model.loss])
+    losses.append(loss0)
 
     elapsed = time.time()-start_time
     print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,

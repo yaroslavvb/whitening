@@ -1,3 +1,4 @@
+import socket
 import contextlib
 import inspect
 import inspect
@@ -1035,6 +1036,10 @@ def capture_vars():
 def Print(op):
   return tf.Print(op, [op], op.name)
 
+
+def get_host_prefix():
+  "ie, returns 10 when on 10.cirrascale..."
+  return socket.gethostname().split('.',1)[0]
 
 def summarize_difference(source, target):
   source = np.asarray(source)
