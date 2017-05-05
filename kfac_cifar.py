@@ -281,7 +281,7 @@ if __name__ == '__main__':
   if args.mode == 'run':
     dsize = 100
   else:
-    dsize = 1000
+    dsize = 100
     
   sess = tf.InteractiveSession()
   model = model_creator(dsize) # TODO: share dataset between models?
@@ -318,6 +318,7 @@ if __name__ == '__main__':
   outfn = 'data/%s_%f_%f.csv'%(prefix, args.lr, args.Lambda)
 
   start_time = time.time()
+  writer = u.BufferedWriter(outfn, 60)
   for step in range(num_steps):
     if args.validate_every_n and step%args.validate_every_n == 0:
       loss0, vloss0 = sess.run([model.loss, model.vloss])
@@ -330,8 +331,7 @@ if __name__ == '__main__':
                                                      vloss0))
 
     # todo: factor out buffering into util
-    with open(outfn, "a") as myfile:
-      myfile.write('%d, %f, %f, %f\n'%(step, elapsed, loss0, vloss0))
+    writer.write('%d, %f, %f, %f\n'%(step, elapsed, loss0, vloss0))
 
     if args.method=='kfac':
       kfac.model.advance_batch()

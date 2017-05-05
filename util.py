@@ -1049,5 +1049,29 @@ def summarize_difference(source, target):
   rel_diff = abs_diff/abs(source)/machine_epsilon
   print("abs diff: %f, rel diff: %.1f eps " %(np.max(abs_diff), np.max(rel_diff)))
 
+class BufferedWriter:
+  """Class that aggregates multiple writes and flushes periodically."""
+  
+  def __init__(self, outfn, save_every_secs=60*5):
+    self.last_save_ts = time.time()
+    self.write_buffer = []
+    self.save_every_secs = save_every_secs
+
+  def write(self, line):
+    self.write_buffer.append(line)
+    if time.time() - self.last_save_ts > self.save_every_secs:
+      self.last_save_ts = time.time()
+      with open(outfn, "a") as myfile:
+        for line in self.write_buffer:
+          myfile.write(line)
+      self.write_buffer = []
+
+  def flush():
+    with open(outfn, "a") as myfile:
+      for line in self.write_buffer:
+        myfile.write(line)
+    self.write_buffer = []
+    
+  
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
