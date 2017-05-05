@@ -355,9 +355,10 @@ class Kfac():
 
     # update SVDs
     corrected_vars = list(s)
-    for var in s:
-      s[var].A.svd.update()
-      s[var].B2.svd.update()
+    with u.timeit("svd"):
+      for var in s:
+        s[var].A.svd.update()
+        s[var].B2.svd.update()
 
   def needs_correction(self, var):
     """Returns whether given variable is getting kfac corrected."""

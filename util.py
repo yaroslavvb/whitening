@@ -9,6 +9,8 @@ import sys
 import tensorflow as tf
 import time
 import traceback
+from collections import OrderedDict
+from collections import defaultdict
 
 # shortcuts to refer to util module, this lets move external code into
 # this module unmodified
@@ -707,16 +709,25 @@ def L2(t):
             t.__class__.__name__.endswith('Variable'))
   return tf.reduce_sum(tf.square(t))
 
-class timeit:    
+global_timeit_dict = OrderedDict()
+class timeit:
+  def __init__(self, tag=""):
+    self.tag = tag
+    
   def __enter__(self):
-    self.start = time.clock()
+    self.start = time.perf_counter()
     return self
-
+  
   def __exit__(self, *args):
-    self.end = time.clock()
-    self.interval = self.end - self.start
-    print("Elapsed: %.2f ms"%(self.interval*1000))
+    self.end = time.perf_counter()
+    interval_ms = 1000*(self.end - self.start)
+    global_timeit_dict.setdefault(self.tag, []).append(interval_ms)
+    print("%s Elapsed: %.2f ms"%(self.tag, interval_ms))
 
+
+def timeit_summarize():
+  global global_timeit_dict
+  pass
 
 # graph traversal
 # computation flows from parents to children
@@ -1053,6 +1064,7 @@ class BufferedWriter:
   """Class that aggregates multiple writes and flushes periodically."""
   
   def __init__(self, outfn, save_every_secs=60*5):
+    self.outfn = outfn
     self.last_save_ts = time.time()
     self.write_buffer = []
     self.save_every_secs = save_every_secs
@@ -1061,7 +1073,7 @@ class BufferedWriter:
     self.write_buffer.append(line)
     if time.time() - self.last_save_ts > self.save_every_secs:
       self.last_save_ts = time.time()
-      with open(outfn, "a") as myfile:
+      with open(self.outfn, "a") as myfile:
         for line in self.write_buffer:
           myfile.write(line)
       self.write_buffer = []

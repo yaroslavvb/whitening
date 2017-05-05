@@ -82,6 +82,21 @@ def ng_init(rows, cols):
   return result.reshape((rows, cols))
 
 
+# load data globally once
+from keras.datasets import cifar10
+(X_train, y_train), (X_test, y_test) = cifar10.load_data()
+
+X_train = X_train.astype(np.float32)
+X_train = X_train.reshape((X_train.shape[0], -1))
+X_test = X_test.astype(np.float32)
+X_test = X_test.reshape((X_test.shape[0], -1))
+X_train /= 255
+X_test /= 255
+
+# todo: rename to better names
+train_images = X_train.T
+test_images = X_test.T
+
 def model_creator(batch_size, dtype=np.float32):
   """Create MNIST autoencoder model. Dataset is part of model."""
 
@@ -133,20 +148,8 @@ def model_creator(batch_size, dtype=np.float32):
     else: 
       return y*(1-y)
 
-  from keras.datasets import cifar10
-  (X_train, y_train), (X_test, y_test) = cifar10.load_data()
-
-  X_train = X_train.astype(dtype)
-  X_train = X_train.reshape((X_train.shape[0], -1))
-  X_test = X_test.astype(dtype)
-  X_test = X_test.reshape((X_test.shape[0], -1))
-  X_train /= 255
-  X_test /= 255
-
-  train_images = X_train.T
   patches = train_images[:,:batch_size];
-  test_patches = X_test.T
-  test_patches = test_patches[:,:batch_size];
+  test_patches = test_images[:,:batch_size];
 
   input_dim = 3*32*32
   fs = [batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
@@ -154,7 +157,7 @@ def model_creator(batch_size, dtype=np.float32):
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
 
-  X = init_var(patches, "X", is_global=False)
+  X = init_var(patches, "X", is_global=True)
   W = [None]*n
   W.insert(0, X)
   A = [None]*(n+2)
@@ -167,7 +170,7 @@ def model_creator(batch_size, dtype=np.float32):
   model.loss = u.L2(err) / (2 * batch_size)
 
   # create test error eval
-  layer0 = init_var(test_patches, "X_test", is_global=False)
+  layer0 = init_var(test_patches, "X_test", is_global=True)
   layer = layer0
   for i in range(1, n+1):
     layer = nonlin(W[i] @ layer)
@@ -260,16 +263,24 @@ def model_creator(batch_size, dtype=np.float32):
       print("Initializing following:")
       for v in to_initialize:
         print("   " + v.name)
-        
-    sess.run(to_initialize, feed_dict=init_dict)
+
+    with u.timeit("global init run"):
+      sess.run(to_initialize, feed_dict=init_dict)
   model.initialize_global_vars = initialize_global_vars
 
   local_init_op = tf.group(*[v.initializer for v in local_vars])
+  print("Local vars:")
+  for v in local_vars:
+    print(v.name)
   def initialize_local_vars():
     sess = tf.get_default_session()
-    sess.run(X.initializer, feed_dict=init_dict)  # A's depend on X
+#    with u.timeit("x_initializer"):
+      # todo: remove this initializer
+      #      sess.run(X.initializer, feed_dict=init_dict)  # A's depend on X
     sess.run(_sampled_labels.initializer, feed_dict=init_dict)
-    sess.run(local_init_op, feed_dict=init_dict)
+    with u.timeit("local_init_op"):
+      #sess.run(local_init_op, feed_dict=init_dict)
+      sess.run(local_init_op)
   model.initialize_local_vars = initialize_local_vars
 
   return model
@@ -279,23 +290,37 @@ if __name__ == '__main__':
   tf.set_random_seed(args.seed)
 
   if args.mode == 'run':
-    dsize = 100
+    dsize = 10000   # todo: dsize vs batch_size
   else:
     dsize = 100
-    
-  sess = tf.InteractiveSession()
-  model = model_creator(dsize) # TODO: share dataset between models?
-  model.initialize_global_vars(verbose=True)
-  model.initialize_local_vars()
-  
-  kfac = Kfac(model_creator, dsize)   # creates another copy of model, initializes
 
-  kfac.model.initialize_global_vars(verbose=True)
-  kfac.model.initialize_local_vars()
-  kfac.reset()    # resets optimization variables (not model variables)
-  #  kfac.lr.set(LR)  # this is only used for adaptive_step
-  kfac.Lambda.set(LAMBDA)
+  with u.timeit("session"):
+    gpu_options = tf.GPUOptions(allow_growth=False)
+    sess = tf.InteractiveSession(config=tf.ConfigProto(gpu_options=gpu_options))
 
+  print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
+  with u.timeit("model initialize"):
+    with u.timeit("model_creator"):
+      model = model_creator(dsize) # TODO: share dataset between models?
+    model.initialize_global_vars(verbose=True)
+    model.initialize_local_vars()
+
+  print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
+  with u.timeit("kfac initialize"):
+    with u.timeit("kfac()"):
+      kfac = Kfac(model_creator, dsize)   # creates another copy of model, initializes
+
+    with u.timeit("kfac.initialize_global_vars()"):
+      kfac.model.initialize_global_vars(verbose=False)
+    with u.timeit("kfac.initialize_local_vars()"):
+      kfac.model.initialize_local_vars()
+    with u.timeit("kfac.reset()"):
+      kfac.reset()    # resets optimization variables (not model variables)
+    #  kfac.lr.set(LR)  # this is only used for adaptive_step
+    with u.timeit("kfac.lambda()"):
+      kfac.Lambda.set(LAMBDA)
+
+  print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
   with u.capture_vars() as opt_vars:
     if args.mode != 'run':
       opt = tf.train.AdamOptimizer(0.001)
@@ -307,7 +332,8 @@ if __name__ == '__main__':
     grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
     grad_new = kfac.correct(grad)
     train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
-  [v.initializer.run() for v in opt_vars]
+  with u.timeit("adam initialize"):
+    sess.run([v.initializer for v in opt_vars])
   
   losses = []
   u.record_time()
@@ -337,11 +363,12 @@ if __name__ == '__main__':
       kfac.model.advance_batch()
       kfac.update_stats()
 
-    model.advance_batch()
-    grad.update()
-    grad_new.update()
-    train_op.run()
-    u.record_time()
+    with u.timeit("train"):
+      model.advance_batch()
+      grad.update()
+      grad_new.update()
+      train_op.run()
+      u.record_time()
 
   u.summarize_time()
   
