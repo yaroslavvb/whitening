@@ -14,7 +14,8 @@ parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate to use')
 parser.add_argument('--validate_every_n', type=int, default=10,
                     help='set to positive number to measure validation')
-parser.add_argument('--Lambda', type=float, default=0.1,
+# lambda tuning graphs: https://wolfr.am/lojcyhYz
+parser.add_argument('--Lambda', type=float, default=0.01,
                     help='lambda value')
 
 args = parser.parse_args()
@@ -34,7 +35,7 @@ else:
   use_fixed_labels = True
   args.seed = 1
 
-prefix="kfac_large"
+prefix="kfac_cifar"
 script_fn = sys.argv[0].split('.', 1)[0]
 assert prefix.startswith(script_fn)
 
@@ -131,13 +132,25 @@ def model_creator(batch_size, dtype=np.float32):
       return 1
     else: 
       return y*(1-y)
-    
-  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(dtype)
-  patches = train_images[:,:batch_size];
-  test_patches = train_images[:,-batch_size:]
-  assert dsize<25000
 
-  fs = [batch_size, 28*28, 1024, 1024, 1024, 196, 1024, 1024, 1024, 28*28]
+  from keras.datasets import cifar10
+  (X_train, y_train), (X_test, y_test) = cifar10.load_data()
+
+  X_train = X_train.astype(dtype)
+  X_train = X_train.reshape((X_train.shape[0], -1))
+  X_test = X_test.astype(dtype)
+  X_test = X_test.reshape((X_test.shape[0], -1))
+  X_train /= 255
+  X_test /= 255
+
+  train_images = X_train.T
+  patches = train_images[:,:batch_size];
+  test_patches = X_test.T
+  test_patches = test_patches[:,:batch_size];
+
+  input_dim = 3*32*32
+  fs = [batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
+        input_dim]
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
 
@@ -150,14 +163,15 @@ def model_creator(batch_size, dtype=np.float32):
     init_val = ng_init(f(i), f(i-1)).astype(dtype)
     W[i] = init_var(init_val, "W_%d"%(i,), is_global=True)
     A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
-    
   err = A[n+1] - A[1]
+  model.loss = u.L2(err) / (2 * batch_size)
 
   # create test error eval
-  layer = init_var(test_patches, "X_test", is_global=False)
+  layer0 = init_var(test_patches, "X_test", is_global=False)
+  layer = layer0
   for i in range(1, n+1):
     layer = nonlin(W[i] @ layer)
-  verr = (layer - test_patches)
+  verr = (layer - layer0)
   model.vloss = u.L2(verr) / (2 * batch_size)
 
   # manually compute backprop to use for sanity checking
@@ -205,19 +219,7 @@ def model_creator(batch_size, dtype=np.float32):
     dW2[i] = B[i] @ t(A[i])
     pre_dW[i] = (whitened_B2 @ t(whitened_A))/batch_size
 
-    #  model.extra['A'] = A
-    #  model.extra['B'] = B
-    #  model.extra['B2'] = B2
-    #  model.extra['cov_A'] = cov_A
-    #  model.extra['cov_B2'] = cov_B2
-    #  model.extra['vars_svd_A'] = vars_svd_A
-    #  model.extra['vars_svd_B2'] = vars_svd_B2
-    #  model.extra['W'] = W
-    #  model.extra['dW'] = dW
-    #  model.extra['dW2'] = dW2
-    #  model.extra['pre_dW'] = pre_dW
     
-  model.loss = u.L2(err) / (2 * batch_size)
   sampled_labels_live = A[n+1] + tf.random_normal((f(n), f(-1)),
                                                   dtype=dtype, seed=0)
   if use_fixed_labels:
@@ -239,9 +241,9 @@ def model_creator(batch_size, dtype=np.float32):
   #global_init_op = tf.group(*[v.initializer for v in global_vars])
   global_init_ops = [v.initializer for v in global_vars]
   global_init_op = tf.group(*[v.initializer for v in global_vars])
-  
   global_init_query_op = [tf.logical_not(tf.is_variable_initialized(v))
                           for v in global_vars]
+  
   def initialize_global_vars(verbose=False, reinitialize=False):
     """If reinitialize is false, will not reinitialize variables already
     initialized."""
@@ -273,11 +275,11 @@ def model_creator(batch_size, dtype=np.float32):
   return model
 
 if __name__ == '__main__':
-  np.random.seed(0)
-  tf.set_random_seed(0)
+  np.random.seed(args.seed)
+  tf.set_random_seed(args.seed)
 
   if args.mode == 'run':
-    dsize = 10000
+    dsize = 100
   else:
     dsize = 1000
     
@@ -327,6 +329,7 @@ if __name__ == '__main__':
     print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,
                                                      vloss0))
 
+    # todo: factor out buffering into util
     with open(outfn, "a") as myfile:
       myfile.write('%d, %f, %f, %f\n'%(step, elapsed, loss0, vloss0))
 
