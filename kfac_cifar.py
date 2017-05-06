@@ -22,6 +22,12 @@ parser.add_argument('-r', '--run', type=str, default='default',
                     help='name of experiment run')
 parser.add_argument('-n', '--num_steps', type=int, default=1000000,
                     help='number of steps')
+parser.add_argument('--dataset', type=str, default="cifar",
+                    help='which dataset to use')
+
+# todo: split between optimizer batch size and stats batch size
+parser.add_argument('-b', '--batch_size', type=int, default=10000,
+                    help='batch size')
 
 args = parser.parse_args()
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
@@ -31,19 +37,14 @@ use_tikhonov=False
 release_name='kfac_cifar'  # release name fixes a specific test set
 release_test_fn = 'data/'+release_name+'_losses_test.csv'
 
-if args.mode == 'run':
-  num_steps=args.num_steps
-  LR=args.lr
-  LAMBDA=args.Lambda
-  use_fixed_labels = args.fixed_labels
-else:
-  num_steps = 10
+if args.mode == 'test':
+  args.num_steps = 10
+  args.dataset = 'cifar'
 #  LR=0.001
-  LAMBDA=1e-1
-  use_fixed_labels = True
+  args.Lambda=1e-1
+  args.fixed_labels = True
   args.seed = 1
 
-#prefix="kfac_cifar"
 prefix=args.run
 
 # Test implementation of KFAC on MNIST
@@ -93,13 +94,20 @@ def ng_init(rows, cols):
 from keras.datasets import cifar10
 (X_train, y_train), (X_test, y_test) = cifar10.load_data()
 
-X_train = X_train.astype(np.float32)
-X_train = X_train.reshape((X_train.shape[0], -1))
-X_test = X_test.astype(np.float32)
-X_test = X_test.reshape((X_test.shape[0], -1))
-X_train /= 255
-X_test /= 255
-
+if args.dataset == 'cifar':
+  X_train = X_train.astype(np.float32)
+  X_train = X_train.reshape((X_train.shape[0], -1))
+  X_test = X_test.astype(np.float32)
+  X_test = X_test.reshape((X_test.shape[0], -1))
+  X_train /= 255
+  X_test /= 255
+elif args.dataset == 'mnist':
+  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(np.float32)
+  test_patches = train_images[:,-1000:]
+  X_train = train_images[:,:1000].T
+  X_test = test_patches.T
+  
+  
 # todo: rename to better names
 train_images = X_train.T
 test_images = X_test.T
@@ -155,12 +163,20 @@ def model_creator(batch_size, dtype=np.float32):
     else: 
       return y*(1-y)
 
-  patches = train_images[:,:batch_size];
-  test_patches = test_images[:,:batch_size];
+  patches = train_images[:,:args.batch_size];
+  test_patches = test_images[:,:args.batch_size];
 
-  input_dim = 3*32*32
-  fs = [batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
-        input_dim]
+  if args.dataset == 'cifar':
+    input_dim = 3*32*32
+    fs = [args.batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
+          input_dim]
+  elif args.dataset == 'mnist':
+    input_dim = 28*28
+    fs = [args.batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
+          input_dim]
+  else:
+    assert False
+    
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
 
@@ -174,7 +190,7 @@ def model_creator(batch_size, dtype=np.float32):
     W[i] = init_var(init_val, "W_%d"%(i,), is_global=True)
     A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
   err = A[n+1] - A[1]
-  model.loss = u.L2(err) / (2 * batch_size)
+  model.loss = u.L2(err) / (2 * args.batch_size)
 
   # create test error eval
   layer0 = init_var(test_patches, "X_test", is_global=True)
@@ -182,14 +198,14 @@ def model_creator(batch_size, dtype=np.float32):
   for i in range(1, n+1):
     layer = nonlin(W[i] @ layer)
   verr = (layer - layer0)
-  model.vloss = u.L2(verr) / (2 * batch_size)
+  model.vloss = u.L2(verr) / (2 * args.batch_size)
 
   # manually compute backprop to use for sanity checking
   B = [None]*(n+1)
   B2 = [None]*(n+1)
   B[n] = err*d_nonlin(A[n+1])
   _sampled_labels_live = tf.random_normal((f(n), f(-1)), dtype=dtype, seed=0)
-  if use_fixed_labels:
+  if args.fixed_labels:
     _sampled_labels_live = tf.ones(shape=(f(n), f(-1)), dtype=dtype)
     
   _sampled_labels = init_var(_sampled_labels_live, "to_be_deleted",
@@ -211,32 +227,32 @@ def model_creator(batch_size, dtype=np.float32):
   pre_dW = [None]*(n+1)   # preconditioned dW
   for i in range(1,n+1):
     if regularized_svd:
-      cov_A[i] = init_var(A[i]@t(A[i])/batch_size+LAMBDA*u.Identity(f(i-1)), "cov_A%d"%(i,))
-      cov_B2[i] = init_var(B2[i]@t(B2[i])/batch_size+LAMBDA*u.Identity(f(i)), "cov_B2%d"%(i,))
+      cov_A[i] = init_var(A[i]@t(A[i])/args.batch_size+args.Lambda*u.Identity(f(i-1)), "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/args.batch_size+args.Lambda*u.Identity(f(i)), "cov_B2%d"%(i,))
     else:
-      cov_A[i] = init_var(A[i]@t(A[i])/batch_size, "cov_A%d"%(i,))
-      cov_B2[i] = init_var(B2[i]@t(B2[i])/batch_size, "cov_B2%d"%(i,))
+      cov_A[i] = init_var(A[i]@t(A[i])/args.batch_size, "cov_A%d"%(i,))
+      cov_B2[i] = init_var(B2[i]@t(B2[i])/args.batch_size, "cov_B2%d"%(i,))
     vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
     vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
     if use_tikhonov:
-      whitened_A = u.regularized_inverse3(vars_svd_A[i],L=LAMBDA) @ A[i]
-      whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=LAMBDA) @ B[i]
+      whitened_A = u.regularized_inverse3(vars_svd_A[i],L=args.Lambda) @ A[i]
+      whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=args.Lambda) @ B[i]
     else:
       whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
       whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
     
-    dW[i] = (B[i] @ t(A[i]))/batch_size
+    dW[i] = (B[i] @ t(A[i]))/args.batch_size
     dW2[i] = B[i] @ t(A[i])
-    pre_dW[i] = (whitened_B2 @ t(whitened_A))/batch_size
+    pre_dW[i] = (whitened_B2 @ t(whitened_A))/args.batch_size
 
     
   sampled_labels_live = A[n+1] + tf.random_normal((f(n), f(-1)),
                                                   dtype=dtype, seed=0)
-  if use_fixed_labels:
+  if args.fixed_labels:
     sampled_labels_live = A[n+1]+tf.ones(shape=(f(n), f(-1)), dtype=dtype)
   sampled_labels = init_var(sampled_labels_live, "sampled_labels", is_global=False)
   err2 = A[n+1] - sampled_labels
-  model.loss2 = u.L2(err2) / (2 * batch_size)
+  model.loss2 = u.L2(err2) / (2 * args.batch_size)
   model.global_vars = global_vars
   model.local_vars = local_vars
   model.trainable_vars = W[1:]
@@ -298,10 +314,8 @@ if __name__ == '__main__':
 
   u.setup_experiment_run_directory(args.run)
   
-  if args.mode == 'run':
-    dsize = 10000   # todo: dsize vs batch_size
-  else:
-    dsize = 100
+  if args.mode == 'test':
+    args.batch_size = 100
 
   with u.timeit("session"):
     gpu_options = tf.GPUOptions(allow_growth=False)
@@ -310,14 +324,14 @@ if __name__ == '__main__':
   print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
   with u.timeit("model initialize"):
     with u.timeit("model_creator"):
-      model = model_creator(dsize) # TODO: share dataset between models?
+      model = model_creator(args.batch_size) # TODO: share dataset between models?
     model.initialize_global_vars(verbose=True)
     model.initialize_local_vars()
 
   print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
   with u.timeit("kfac initialize"):
     with u.timeit("kfac()"):
-      kfac = Kfac(model_creator, dsize)   # creates another copy of model, initializes
+      kfac = Kfac(model_creator, args.batch_size)   # creates another copy of model, initializes
 
     with u.timeit("kfac.initialize_global_vars()"):
       kfac.model.initialize_global_vars(verbose=False)
@@ -327,14 +341,14 @@ if __name__ == '__main__':
       kfac.reset()    # resets optimization variables (not model variables)
     #  kfac.lr.set(LR)  # this is only used for adaptive_step
     with u.timeit("kfac.lambda()"):
-      kfac.Lambda.set(LAMBDA)
+      kfac.Lambda.set(args.Lambda)
 
   print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
   with u.capture_vars() as opt_vars:
     if args.mode != 'run':
       opt = tf.train.AdamOptimizer(0.001)
     else:
-      opt = tf.train.AdamOptimizer(LR)
+      opt = tf.train.AdamOptimizer(args.lr)
       
     grads_and_vars = opt.compute_gradients(model.loss,
                                            var_list=model.trainable_vars)
@@ -357,7 +371,7 @@ if __name__ == '__main__':
   sw = tf.summary.FileWriter('runs/'+prefix, sess.graph)
   
   writer = u.BufferedWriter(outfn, 60)
-  for step in range(num_steps):
+  for step in range(args.num_steps):
     
     if args.validate_every_n and step%args.validate_every_n == 0:
       loss0, vloss0 = sess.run([model.loss, model.vloss])
@@ -368,7 +382,8 @@ if __name__ == '__main__':
 
     summary = tf.Summary()
     summary.value.add(tag="loss", simple_value=float(loss0))
-    summary.value.add(tag="vloss", simple_value=float(vloss0))
+    summary.value.add(tag="vloss/1", simple_value=float(vloss0))
+    summary.value.add(tag="vloss/2", simple_value=float(vloss0))
     sw.add_summary(summary, step)
     
     elapsed = time.time()-start_time

@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import argparse
 import json
 import os
@@ -27,12 +29,14 @@ if args.mode == 'run':
   LR=args.lr
   LAMBDA=args.Lambda
   use_fixed_labels = args.fixed_labels
-else:
+elif args.mode == 'test':
   num_steps = 10
 #  LR=0.001
   LAMBDA=1e-1
   use_fixed_labels = True
   args.seed = 1
+else:
+  assert False
 
 prefix="kfac_large"
 script_fn = sys.argv[0].split('.', 1)[0]
@@ -278,8 +282,10 @@ if __name__ == '__main__':
 
   if args.mode == 'run':
     dsize = 10000
-  else:
+  elif args.mode == 'test':
     dsize = 1000
+  else:
+    assert False
     
   sess = tf.InteractiveSession()
   model = model_creator(dsize) # TODO: share dataset between models?

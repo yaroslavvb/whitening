@@ -1091,7 +1091,7 @@ def setup_experiment_run_directory(run):
   rundir = "runs/%s"%(run,)
   if os.path.exists(rundir):
     print("Removing %s"%(rundir,))
-  os.system("rm -Rf "+rundir)
+    os.system("rm -Rf "+rundir)
   os.system("mkdir %s"%(rundir,))
   
 if __name__=='__main__':
