@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import argparse
 import json
 import os
@@ -15,16 +16,23 @@ parser.add_argument('--lr', type=float, default=0.001,
 parser.add_argument('--validate_every_n', type=int, default=10,
                     help='set to positive number to measure validation')
 # lambda tuning graphs: https://wolfr.am/lojcyhYz
-parser.add_argument('--Lambda', type=float, default=0.01,
+parser.add_argument('-L', '--Lambda', type=float, default=0.01,
                     help='lambda value')
+parser.add_argument('-r', '--run', type=str, default='default',
+                    help='name of experiment run')
+parser.add_argument('-n', '--num_steps', type=int, default=1000000,
+                    help='number of steps')
 
 args = parser.parse_args()
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
 
 use_tikhonov=False
 
+release_name='kfac_cifar'  # release name fixes a specific test set
+release_test_fn = 'data/'+release_name+'_losses_test.csv'
+
 if args.mode == 'run':
-  num_steps=10000
+  num_steps=args.num_steps
   LR=args.lr
   LAMBDA=args.Lambda
   use_fixed_labels = args.fixed_labels
@@ -35,9 +43,8 @@ else:
   use_fixed_labels = True
   args.seed = 1
 
-prefix="kfac_cifar"
-script_fn = sys.argv[0].split('.', 1)[0]
-assert prefix.startswith(script_fn)
+#prefix="kfac_cifar"
+prefix=args.run
 
 # Test implementation of KFAC on MNIST
 import load_MNIST
@@ -289,6 +296,8 @@ if __name__ == '__main__':
   np.random.seed(args.seed)
   tf.set_random_seed(args.seed)
 
+  u.setup_experiment_run_directory(args.run)
+  
   if args.mode == 'run':
     dsize = 10000   # todo: dsize vs batch_size
   else:
@@ -340,18 +349,28 @@ if __name__ == '__main__':
 
   start_time = time.time()
   vloss0 = 0
-  
+
+  # todo, unify the two data outputs
   outfn = 'data/%s_%f_%f.csv'%(prefix, args.lr, args.Lambda)
 
   start_time = time.time()
+  sw = tf.summary.FileWriter('runs/'+prefix, sess.graph)
+  
   writer = u.BufferedWriter(outfn, 60)
   for step in range(num_steps):
+    
     if args.validate_every_n and step%args.validate_every_n == 0:
       loss0, vloss0 = sess.run([model.loss, model.vloss])
+      sw.flush()
     else:
       loss0, = sess.run([model.loss])
     losses.append(loss0)
 
+    summary = tf.Summary()
+    summary.value.add(tag="loss", simple_value=float(loss0))
+    summary.value.add(tag="vloss", simple_value=float(vloss0))
+    sw.add_summary(summary, step)
+    
     elapsed = time.time()-start_time
     print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,
                                                      vloss0))
@@ -371,13 +390,13 @@ if __name__ == '__main__':
       u.record_time()
 
   u.summarize_time()
+  sw.close()
   
-  losses_fn = '%s_losses_test.csv' %(prefix,)
   if args.mode == 'record':
     u.dump_with_prompt(losses, losses_fn)
 
   elif args.mode == 'test':
-    targets = np.loadtxt("data/"+losses_fn, delimiter=",")
+    targets = np.loadtxt(release_test_fn, delimiter=",")
     u.check_equal(losses, targets, rtol=1e-2)
     u.summarize_difference(losses, targets)
 

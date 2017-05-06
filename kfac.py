@@ -7,6 +7,7 @@ assert inverse_method in inverse_methods
 
 adaptive_step = False     # adjust step length based on predicted decrease
 step_rejection = False    # reject bad steps
+dont_update_first_layer = False # what it says
 
 import sys
 import numpy as np
@@ -357,7 +358,8 @@ class Kfac():
     corrected_vars = list(s)
     with u.timeit("svd"):
       for var in s:
-        s[var].A.svd.update()
+        if not dont_update_first_layer or s[var].A.svd.update_counter==0:
+          s[var].A.svd.update()
         s[var].B2.svd.update()
 
   def needs_correction(self, var):

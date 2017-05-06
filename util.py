@@ -600,13 +600,13 @@ global_last_time = 0
 def reset_time():
   global global_time_list, global_last_time
   global_time_list = []
-  global_last_time = time.time()
+  global_last_time = time.perf_counter()
   
 def record_time():
   global global_last_time, global_time_list
-  new_time = time.time()
+  new_time = time.perf_counter()
   global_time_list.append(new_time - global_last_time)
-  global_last_time = time.time()
+  global_last_time = time.perf_counter()
 
 def last_time():
   global global_last_time, global_time_list
@@ -619,7 +619,7 @@ def summarize_time(time_list=None):
   if time_list is None:
     time_list = global_time_list
 
-  if time_list[0]>1e9:   
+    if time_list[0]>3600*10:   # large first interval means no relative ts
     del time_list[0]
     
   time_list = 1000*np.array(time_list)  # get seconds, convert to ms
@@ -801,6 +801,7 @@ class SvdWrapper:
     self.target = target
     self.do_inverses = do_inverses
     self.tf_svd = SvdTuple(tf.svd(target))
+    self.update_counter = 0
 
     self.init = SvdTuple(
       ones(target.shape[0], name=name+"_s_init"),
@@ -860,6 +861,7 @@ class SvdWrapper:
       self.update_scipy()
     else:
       self.update_tf()
+    self.update_counter+=1
       
   def update_tf(self):
     sess = tf.get_default_session()
@@ -1018,7 +1020,7 @@ def capture_ops():
   print(ops) # => prints ops created.
   """
 
-  micros = int(time.time()*10**6)
+  micros = int(time.perf_counter()*10**6)
   scope_name = str(micros)
   op_list = []
   with tf.name_scope(scope_name):
@@ -1032,7 +1034,7 @@ def capture_vars():
   """Decorator to capture global variables created in the block.
   """
   
-  micros = int(time.time()*10**6)
+  micros = int(time.perf_counter()*10**6)
   scope_name = "capture_vars_"+str(micros)
   op_list = []
   with tf.variable_scope(scope_name):
@@ -1065,14 +1067,14 @@ class BufferedWriter:
   
   def __init__(self, outfn, save_every_secs=60*5):
     self.outfn = outfn
-    self.last_save_ts = time.time()
+    self.last_save_ts = time.perf_counter()
     self.write_buffer = []
     self.save_every_secs = save_every_secs
 
   def write(self, line):
     self.write_buffer.append(line)
-    if time.time() - self.last_save_ts > self.save_every_secs:
-      self.last_save_ts = time.time()
+    if time.perf_counter() - self.last_save_ts > self.save_every_secs:
+      self.last_save_ts = time.perf_counter()
       with open(self.outfn, "a") as myfile:
         for line in self.write_buffer:
           myfile.write(line)
@@ -1084,6 +1086,13 @@ class BufferedWriter:
         myfile.write(line)
     self.write_buffer = []
     
+
+def setup_experiment_run_directory(run):
+  rundir = "runs/%s"%(run,)
+  if os.path.exists(rundir):
+    print("Removing %s"%(rundir,))
+  os.system("rm -Rf "+rundir)
+  os.system("mkdir %s"%(rundir,))
   
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
