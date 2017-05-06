@@ -24,8 +24,9 @@ import util
 from util import t  # transpose
 from util import VarStruct
 
+model_names = set()
 class Model:
-  def __init__(self):
+  def __init__(self, name):
     self.loss = None            # loss
     self.loss2 = None           # loss wrt synthetic labels
     self.vloss = None           # validation loss (fixed data baked into model)
@@ -38,7 +39,16 @@ class Model:
                                 # shared across all instances of model)
     self.extra = {}             # extra data
 
+    # assign model a unique name
+    new_name = name
+    i = 0
+    while new_name in model_names:
+      new_name = '%s_%d'%(name, i)
+      i+=1
+    self.name = new_name
+    model_names.add(self.name)
 
+    
 class IndexedGrad:
   """OrderedDict-like object representing a set of cached gradients indexed by
   variables wrt to which the grad was taken. Values of gradient are stored in
@@ -226,7 +236,7 @@ class Kfac():
     
     s = self       # use for private members, ie, s.some_internal_val
 
-    s.model = model_creator(dsize)
+    s.model = model_creator(dsize, name="kfac")
     if do_early_init:
       s.model.initialize_local_vars()
       s.model.initialize_global_vars()
@@ -345,7 +355,6 @@ class Kfac():
     ops = []
 
     # update covariances
-    s.model.advance_batch()
     s.grad.update()   # TODO: not needed
     s.grad2.update()
     

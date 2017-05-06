@@ -27,6 +27,10 @@ parser.add_argument('--dataset', type=str, default="cifar",
 # todo: split between optimizer batch size and stats batch size
 parser.add_argument('-b', '--batch_size', type=int, default=10000,
                     help='batch size')
+parser.add_argument('--dataset_size', type=int, default=10000,
+                    help='truncate dataset at this value')
+parser.add_argument('--advance_batch', type=int, default=0,
+                    help='whether to advance batch')
 
 args = parser.parse_args()
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':')))
@@ -64,9 +68,6 @@ import tensorflow as tf
 import numpy as np
 
 
-rng = np.random.RandomState(args.seed)
-tf.set_random_seed(args.seed)
-
 # TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
 purely_relu = True     # convert sigmoids into ReLUs
@@ -74,8 +75,7 @@ purely_relu = True     # convert sigmoids into ReLUs
 regularized_svd = True # kfac_lib.regularized_svd # TODO: delete this
 
 
-rundir = u.setup_experiment_run_directory(args.run,
-                                          safe_mode=(args.mode=='run'))
+rundir = u.setup_experiment_run_directory(args.run)
 with open(rundir+'/args.txt', 'w') as f:
   f.write(json.dumps(vars(args), indent=4, separators=(',',':')))
   f.write('\n')
@@ -107,19 +107,23 @@ if args.dataset == 'cifar':
   X_test /= 255
 elif args.dataset == 'mnist':
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(np.float32)
-  test_patches = train_images[:,-args.batch_size:]
-  X_train = train_images[:,:args.batch_size].T
-  X_test = test_patches.T
+  # todo: load test images from separate file like with cifar
+  # todo: remove this extra truncation since it happens later
+  #  test_patches = train_images[:,-args.dataset_size:]
+  test_images = load_MNIST.load_MNIST_images('data/t10k-images-idx3-ubyte').astype(np.float32)
+
+  X_train = train_images[:,:args.dataset_size].T   # batch last
+  X_test = test_images.T # test_patches.T
   
   
 # todo: rename to better names
-train_images = X_train.T
+train_images = X_train.T  # batch first
 test_images = X_test.T
 
-def model_creator(batch_size, dtype=np.float32):
+def model_creator(batch_size, name="default", dtype=np.float32):
   """Create MNIST autoencoder model. Dataset is part of model."""
 
-  model = Model()
+  model = Model(name)
 
   init_dict = {}
   global_vars = []
@@ -184,6 +188,9 @@ def model_creator(batch_size, dtype=np.float32):
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
 
+  # Full dataset from which new batches are sampled
+  X_full = init_var(train_images, "X_full", is_global=True)
+  
   X = init_var(patches, "X", is_global=True)
   W = [None]*n
   W.insert(0, X)
@@ -261,10 +268,18 @@ def model_creator(batch_size, dtype=np.float32):
   model.local_vars = local_vars
   model.trainable_vars = W[1:]
 
+
+  model.step = init_var(0, "step", is_global=False)
+  advance_step_op = model.step.assign_add(1)
   def advance_batch():
+    print("Step for model(%s) is %s"%(model.name, model.step.eval()))
     sess = tf.get_default_session()
     # TODO: get rid of _sampled_labels
     sess.run([sampled_labels.initializer, _sampled_labels.initializer])
+    if args.advance_batch:
+      pass
+    sess.run(advance_step_op)
+    
   model.advance_batch = advance_batch
 
   # TODO: refactor this to take initial values out of Var struct
@@ -307,15 +322,16 @@ def model_creator(batch_size, dtype=np.float32):
     sess.run(_sampled_labels.initializer, feed_dict=init_dict)
     with u.timeit("local_init_op"):
       #sess.run(local_init_op, feed_dict=init_dict)
-      sess.run(local_init_op)
+      sess.run(local_init_op, feed_dict=init_dict)
   model.initialize_local_vars = initialize_local_vars
 
   return model
 
-if __name__ == '__main__':
+def main():
+  #  rng = np.random.RandomState(args.seed)
   np.random.seed(args.seed)
   tf.set_random_seed(args.seed)
-  
+
   if args.mode == 'test':
     args.batch_size = 100
 
@@ -326,10 +342,10 @@ if __name__ == '__main__':
   print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
   with u.timeit("model initialize"):
     with u.timeit("model_creator"):
-      model = model_creator(args.batch_size) # TODO: share dataset between models?
+      model = model_creator(args.batch_size, name="main")
     model.initialize_global_vars(verbose=True)
     model.initialize_local_vars()
-
+  
   print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
   with u.timeit("kfac initialize"):
     with u.timeit("kfac()"):
@@ -384,6 +400,7 @@ if __name__ == '__main__':
 
     summary = tf.Summary()
     summary.value.add(tag="loss", simple_value=float(loss0))
+    # todo: remove vloss/1, vloss/2
     summary.value.add(tag="vloss/1", simple_value=float(vloss0))
     summary.value.add(tag="vloss/2", simple_value=float(vloss0))
     sw.add_summary(summary, step)
@@ -417,3 +434,6 @@ if __name__ == '__main__':
     u.check_equal(losses, targets, rtol=1e-2)
     u.summarize_difference(losses, targets)
 
+
+if __name__ == '__main__':
+  main()
