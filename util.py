@@ -619,7 +619,7 @@ def summarize_time(time_list=None):
   if time_list is None:
     time_list = global_time_list
 
-    if time_list[0]>3600*10:   # large first interval means no relative ts
+  if time_list[0]>3600*10:   # large first interval means no relative ts
     del time_list[0]
     
   time_list = 1000*np.array(time_list)  # get seconds, convert to ms
