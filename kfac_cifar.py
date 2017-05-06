@@ -24,13 +24,12 @@ parser.add_argument('-n', '--num_steps', type=int, default=1000000,
                     help='number of steps')
 parser.add_argument('--dataset', type=str, default="cifar",
                     help='which dataset to use')
-
 # todo: split between optimizer batch size and stats batch size
 parser.add_argument('-b', '--batch_size', type=int, default=10000,
                     help='batch size')
 
 args = parser.parse_args()
-print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
+print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':')))
 
 use_tikhonov=False
 
@@ -75,6 +74,12 @@ purely_relu = True     # convert sigmoids into ReLUs
 regularized_svd = True # kfac_lib.regularized_svd # TODO: delete this
 
 
+rundir = u.setup_experiment_run_directory(args.run,
+                                          safe_mode=(args.mode=='run'))
+with open(rundir+'/args.txt', 'w') as f:
+  f.write(json.dumps(vars(args), indent=4, separators=(',',':')))
+  f.write('\n')
+
 # TODO: get rid
 def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
   r = np.sqrt(6) / np.sqrt(s1 + s2 + 1)
@@ -90,11 +95,10 @@ def ng_init(rows, cols):
   return result.reshape((rows, cols))
 
 
-# load data globally once
-from keras.datasets import cifar10
-(X_train, y_train), (X_test, y_test) = cifar10.load_data()
-
 if args.dataset == 'cifar':
+  # load data globally once
+  from keras.datasets import cifar10
+  (X_train, y_train), (X_test, y_test) = cifar10.load_data()
   X_train = X_train.astype(np.float32)
   X_train = X_train.reshape((X_train.shape[0], -1))
   X_test = X_test.astype(np.float32)
@@ -103,8 +107,8 @@ if args.dataset == 'cifar':
   X_test /= 255
 elif args.dataset == 'mnist':
   train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(np.float32)
-  test_patches = train_images[:,-1000:]
-  X_train = train_images[:,:1000].T
+  test_patches = train_images[:,-args.batch_size:]
+  X_train = train_images[:,:args.batch_size].T
   X_test = test_patches.T
   
   
@@ -311,8 +315,6 @@ def model_creator(batch_size, dtype=np.float32):
 if __name__ == '__main__':
   np.random.seed(args.seed)
   tf.set_random_seed(args.seed)
-
-  u.setup_experiment_run_directory(args.run)
   
   if args.mode == 'test':
     args.batch_size = 100

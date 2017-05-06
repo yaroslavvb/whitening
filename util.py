@@ -722,7 +722,7 @@ class timeit:
     self.end = time.perf_counter()
     interval_ms = 1000*(self.end - self.start)
     global_timeit_dict.setdefault(self.tag, []).append(interval_ms)
-    print("%s Elapsed: %.2f ms"%(self.tag, interval_ms))
+    print("    %s Elapsed: %.2f ms"%(self.tag, interval_ms))
 
 
 def timeit_summarize():
@@ -1086,13 +1086,24 @@ class BufferedWriter:
         myfile.write(line)
     self.write_buffer = []
     
-
-def setup_experiment_run_directory(run):
+def ossystem(line):
+  print(line)
+  os.system(line)
+  
+def setup_experiment_run_directory(run, safe_mode=False):
   rundir = "runs/%s"%(run,)
   if os.path.exists(rundir):
+    if safe_mode:
+      answer = input("%s exists, delete? (Y/n) "%(rundir,))
+      if not answer:
+        answer = "y"
+      if answer.lower() != "y":
+        print("skipping")
+        sys.exit()
     print("Removing %s"%(rundir,))
-    os.system("rm -Rf "+rundir)
-  os.system("mkdir %s"%(rundir,))
+    ossystem("rm -Rf "+rundir)
+  ossystem("mkdir %s"%(rundir,))
+  return rundir
   
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
