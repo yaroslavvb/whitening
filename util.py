@@ -1094,6 +1094,7 @@ def ossystem(line):
   os.system(line)
   
 def setup_experiment_run_directory(run, safe_mode=True):
+  # TODO: factor out to use GLOBAL_RUNS_DIRECTORY
   rundir = "runs/%s"%(run,)
   if os.path.exists(rundir):
     if safe_mode and not run=='default':
@@ -1107,6 +1108,55 @@ def setup_experiment_run_directory(run, safe_mode=True):
     ossystem("rm -Rf "+rundir)
   ossystem("mkdir %s"%(rundir,))
   return rundir
+
+########################################
+# Tensorboard logging
+########################################
+
+# TODO: have global experiment_base that I can use to move logging to
+# non-current directory
+GLOBAL_RUNS_DIRECTORY='runs'
+global_last_logger = None
+
+def get_last_logger():
+  global global_last_logger
+  assert global_last_logger
+  return global_last_logger
+
+class TensorboardLogger:
+  """Helper class to log to single tensorboard writer from multiple places.
+   logger = u.TensorboardLogger("mnist7")
+   logger = u.get_last_logger()  # gets last logger created
+   logger('svd_time', 5)  # records "svd_time" stat at 5
+   logger.next_step()     # advances step counter
+   logger.set_step(5)     # sets step counter to 5
+  """
   
+  def __init__(self, run, step=0):
+    # TODO: do nothing for default run
+    
+    global global_last_logger
+    assert global_last_logger is None
+    self.run = run
+    #    sess = tf.get_default_session()
+
+    self.summary_writer = tf.summary.FileWriter(GLOBAL_RUNS_DIRECTORY+'/'+run,
+                                                graph=tf.get_default_graph())
+    self.step = step
+    self.summary = tf.Summary()
+    global_last_logger = self
+
+  def __call__(self, *args):
+    assert len(args)%2 == 0
+    for (tag, value) in chunks(args, 2):
+      self.summary.value.add(tag=tag, simple_value=float(value))
+
+  def next_step(self):
+    self.summary_writer.add_summary(self.summary, self.step)
+    self.step+=1
+    self.summary = tf.Summary()
+
+    
+
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])

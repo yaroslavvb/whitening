@@ -429,25 +429,19 @@ def main():
   outfn = 'data/%s_%f_%f.csv'%(args.run, args.lr, args.Lambda)
 
   start_time = time.time()
-  sw = tf.summary.FileWriter('runs/'+args.run, sess.graph)
-  
-  writer = u.BufferedWriter(outfn, 60)
+  writer = u.BufferedWriter(outfn, 60)   # get rid?
+  logger = u.TensorboardLogger(args.run)
   for step in range(args.num_steps):
     
     if args.validate_every_n and step%args.validate_every_n == 0:
       loss0, vloss0 = sessrun([model.loss, model.vloss])
-      sw.flush()
     else:
       loss0, = sessrun([model.loss])
-    losses.append(loss0)
+    losses.append(loss0)  # TODO: remove this
 
-    summary = tf.Summary()
-    summary.value.add(tag="loss", simple_value=float(loss0))
-    # todo: remove vloss/1, vloss/2
-    summary.value.add(tag="vloss/1", simple_value=float(vloss0))
-    summary.value.add(tag="vloss/2", simple_value=float(vloss0))
-    sw.add_summary(summary, step)
+    logger('loss', loss0, 'vloss', vloss0)
     
+    # todo: refactor/simplify this loop
     elapsed = time.time()-start_time
     print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,
                                                      vloss0))
@@ -466,11 +460,15 @@ def main():
       train_op.run()
       u.record_time()
 
+    logger.next_step()
+
+  # TODO: use u.global_runs_dir
+  # TODO: get rid of u.timeit?
+  
   with open('timelines/graphdef.txt', 'w') as f:
     f.write(str(tf.get_default_graph().as_graph_def()))
 
   u.summarize_time()
-  sw.close()
   
   if args.mode == 'record':
     u.dump_with_prompt(losses, release_test_fn)
