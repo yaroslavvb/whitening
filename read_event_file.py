@@ -21,5 +21,6 @@ for gen in gens:
     if (event.HasField('graph_def') or event.HasField('session_log') or
         event.HasField('meta_graph_def')):
       continue
+    print("step: "+str(event.step))
     for value in event.summary.value:
-      print("%s %f"%(value.tag, value.simple_value))
+      print("   %s %f"%(value.tag, value.simple_value))
