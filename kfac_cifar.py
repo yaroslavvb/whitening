@@ -163,6 +163,12 @@ def model_creator(batch_size, name="default", dtype=np.float32):
 
   model = Model(name)
 
+  def get_batch_size(data):
+    if isinstance(data, IndexedGrad):
+      return int(data.live[0].shape[1])
+    else:
+      return int(data.shape[1])
+
   init_dict = {}
   global_vars = []
   local_vars = []
@@ -239,7 +245,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     W[i] = init_var(init_val, "W_%d"%(i,), is_global=True)
     A[i+1] = nonlin(kfac_lib.matmul(W[i], A[i]))
   err = A[n+1] - A[1]
-  model.loss = u.L2(err) / (2 * args.batch_size)
+  model.loss = u.L2(err) / (2 * get_batch_size(err))
 
   # create test error eval
   layer0 = init_var(test_patches, "X_test", is_global=True)
@@ -247,7 +253,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   for i in range(1, n+1):
     layer = nonlin(W[i] @ layer)
   verr = (layer - layer0)
-  model.vloss = u.L2(verr) / (2 * args.batch_size)
+  model.vloss = u.L2(verr) / (2 * get_batch_size(verr))
 
   # manually compute backprop to use for sanity checking
   B = [None]*(n+1)
