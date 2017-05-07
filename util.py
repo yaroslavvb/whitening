@@ -726,6 +726,8 @@ class timeit:
     interval_ms = 1000*(self.end - self.start)
     global_timeit_dict.setdefault(self.tag, []).append(interval_ms)
     print("    %s Elapsed: %.2f ms"%(self.tag, interval_ms))
+    logger = u.get_last_logger()
+    logger('time/'+self.tag, interval_ms)
 
 
 def timeit_summarize():
@@ -1145,6 +1147,7 @@ class TensorboardLogger:
     self.step = step
     self.summary = tf.Summary()
     global_last_logger = self
+    self.last_timestamp = time.perf_counter()
 
   def __call__(self, *args):
     assert len(args)%2 == 0
@@ -1152,11 +1155,14 @@ class TensorboardLogger:
       self.summary.value.add(tag=tag, simple_value=float(value))
 
   def next_step(self):
+    new_timestamp = time.perf_counter()
+    self.summary.value.add(tag='time/step',
+                           simple_value=(new_timestamp-self.last_timestamp))
+    self.last_timestamp = new_timestamp
     self.summary_writer.add_summary(self.summary, self.step)
     self.step+=1
     self.summary = tf.Summary()
 
-    
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])

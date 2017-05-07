@@ -220,14 +220,12 @@ def model_creator(batch_size, name="default", dtype=np.float32):
 
   if args.dataset == 'cifar':
     input_dim = 3*32*32
-    fs = [args.batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
-          input_dim]
   elif args.dataset == 'mnist':
     input_dim = 28*28
-    fs = [args.batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
-          input_dim]
   else:
     assert False
+  fs = [args.batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
+        input_dim]
     
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
@@ -352,8 +350,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
       for v in to_initialize:
         print("   " + v.name)
 
-    with u.timeit("global init run"):
-      sessrun(to_initialize, feed_dict=init_dict)
+    sessrun(to_initialize, feed_dict=init_dict)
   model.initialize_global_vars = initialize_global_vars
 
   local_init_op = tf.group(*[v.initializer for v in local_vars],
@@ -362,13 +359,10 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   for v in local_vars:
     print(v.name)
     
-#  @profile
   def initialize_local_vars():
     sess = tf.get_default_session()
     sessrun(_sampled_labels.initializer, feed_dict=init_dict)
-    with u.timeit("local_init_op"):
-      #sessrun(local_init_op, feed_dict=init_dict)
-      sessrun(local_init_op, feed_dict=init_dict)
+    sessrun(local_init_op, feed_dict=init_dict)
   model.initialize_local_vars = initialize_local_vars
 
   return model
@@ -378,33 +372,24 @@ def main():
   np.random.seed(args.seed)
   tf.set_random_seed(args.seed)
 
-  with u.timeit("session"):
+  logger = u.TensorboardLogger(args.run)
+  
+  with u.timeit("init/session"):
     gpu_options = tf.GPUOptions(allow_growth=False)
     sess = tf.InteractiveSession(config=tf.ConfigProto(gpu_options=gpu_options))
 
-  print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
-  with u.timeit("model initialize"):
-    with u.timeit("model_creator"):
-      model = model_creator(args.batch_size, name="main")
+  with u.timeit("init/model_init"):
+    model = model_creator(args.batch_size, name="main")
     model.initialize_global_vars(verbose=True)
     model.initialize_local_vars()
   
-  print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
-  with u.timeit("kfac initialize"):
-    with u.timeit("kfac()"):
-      kfac = Kfac(model_creator, args.batch_size)   # creates another copy of model, initializes
+  with u.timeit("init/kfac_init"):
+    kfac = Kfac(model_creator, args.batch_size) 
+    kfac.model.initialize_global_vars(verbose=False)
+    kfac.model.initialize_local_vars()
+    kfac.reset()    # resets optimization variables (not model variables)
+    kfac.Lambda.set(args.Lambda)
 
-    with u.timeit("kfac.initialize_global_vars()"):
-      kfac.model.initialize_global_vars(verbose=False)
-    with u.timeit("kfac.initialize_local_vars()"):
-      kfac.model.initialize_local_vars()
-    with u.timeit("kfac.reset()"):
-      kfac.reset()    # resets optimization variables (not model variables)
-    #  kfac.lr.set(LR)  # this is only used for adaptive_step
-    with u.timeit("kfac.lambda()"):
-      kfac.Lambda.set(args.Lambda)
-
-  print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
   if args.mode != 'run':
     opt = tf.train.AdamOptimizer(0.001)
   else:
@@ -416,7 +401,7 @@ def main():
   grad_new = kfac.correct(grad)
   with u.capture_vars() as adam_vars:
     train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
-  with u.timeit("adam initialize"):
+  with u.timeit("init/adam"):
     sessrun([v.initializer for v in adam_vars])
   
   losses = []
@@ -427,10 +412,9 @@ def main():
 
   # todo, unify the two data outputs
   outfn = 'data/%s_%f_%f.csv'%(args.run, args.lr, args.Lambda)
+  writer = u.BufferedWriter(outfn, 60)   # get rid?
 
   start_time = time.time()
-  writer = u.BufferedWriter(outfn, 60)   # get rid?
-  logger = u.TensorboardLogger(args.run)
   for step in range(args.num_steps):
     
     if args.validate_every_n and step%args.validate_every_n == 0:
@@ -441,12 +425,9 @@ def main():
 
     logger('loss', loss0, 'vloss', vloss0)
     
-    # todo: refactor/simplify this loop
     elapsed = time.time()-start_time
     print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,
                                                      vloss0))
-
-    # todo: factor out buffering into util
     writer.write('%d, %f, %f, %f\n'%(step, elapsed, loss0, vloss0))
 
     if args.method=='kfac':
