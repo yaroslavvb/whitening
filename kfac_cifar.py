@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+GLOBAL_PROFILE = False
+
+from tensorflow.python.client import timeline
 import argparse
 import json
 import os
@@ -120,6 +123,35 @@ elif args.dataset == 'mnist':
 train_images = X_train.T  # batch first
 test_images = X_test.T
 
+full_trace_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE,
+                                   output_partition_graphs=True)
+def sessrun(*args, **kwargs):
+  sess = tf.get_default_session()
+  if not GLOBAL_PROFILE:
+    return sess.run(*args, **kwargs)
+  
+  run_metadata = tf.RunMetadata()
+
+  kwargs['options'] = full_trace_options
+  kwargs['run_metadata'] = run_metadata
+  result = sess.run(*args, **kwargs)
+  first_entry = args[0]
+  if isinstance(first_entry, list):
+    if len(first_entry) == 0 and len(args) == 1:
+      return None
+    first_entry = first_entry[0]
+  name = first_entry.name
+  name = name.replace('/', '-')
+
+  tl = timeline.Timeline(run_metadata.step_stats)
+  ctf = tl.generate_chrome_trace_format()
+  with open('timelines/%s.json'%(name,), 'w') as f:
+    f.write(ctf)
+  with open('timelines/%s.pbtxt'%(name,), 'w') as f:
+    f.write(str(run_metadata))
+  return result
+
+
 def model_creator(batch_size, name="default", dtype=np.float32):
   """Create MNIST autoencoder model. Dataset is part of model."""
 
@@ -236,6 +268,8 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   dW = [None]*(n+1)
   dW2 = [None]*(n+1)
   pre_dW = [None]*(n+1)   # preconditioned dW
+  # todo: decouple initial value from covariance update
+  # maybe need start with identity and do running average
   for i in range(1,n+1):
     if regularized_svd:
       cov_A[i] = init_var(A[i]@t(A[i])/args.batch_size+args.Lambda*u.Identity(f(i-1)), "cov_A%d"%(i,))
@@ -275,10 +309,10 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     print("Step for model(%s) is %s"%(model.name, model.step.eval()))
     sess = tf.get_default_session()
     # TODO: get rid of _sampled_labels
-    sess.run([sampled_labels.initializer, _sampled_labels.initializer])
+    sessrun([sampled_labels.initializer, _sampled_labels.initializer])
     if args.advance_batch:
       pass
-    sess.run(advance_step_op)
+    sessrun(advance_step_op)
     
   model.advance_batch = advance_batch
 
@@ -286,8 +320,8 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   #global_init_op = tf.group(*[v.initializer for v in global_vars])
   global_init_ops = [v.initializer for v in global_vars]
   global_init_op = tf.group(*[v.initializer for v in global_vars])
-  global_init_query_op = [tf.logical_not(tf.is_variable_initialized(v))
-                          for v in global_vars]
+  global_init_query_ops = [tf.logical_not(tf.is_variable_initialized(v))
+                           for v in global_vars]
   
   def initialize_global_vars(verbose=False, reinitialize=False):
     """If reinitialize is false, will not reinitialize variables already
@@ -295,7 +329,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     
     sess = tf.get_default_session()
     if not reinitialize:
-      uninited = sess.run(global_init_query_op)
+      uninited = sessrun(global_init_query_ops)
       # use numpy boolean indexing to select list of initializers to run
       to_initialize = list(np.asarray(global_init_ops)[uninited])
     else:
@@ -307,26 +341,27 @@ def model_creator(batch_size, name="default", dtype=np.float32):
         print("   " + v.name)
 
     with u.timeit("global init run"):
-      sess.run(to_initialize, feed_dict=init_dict)
+      sessrun(to_initialize, feed_dict=init_dict)
   model.initialize_global_vars = initialize_global_vars
 
-  local_init_op = tf.group(*[v.initializer for v in local_vars])
+  local_init_op = tf.group(*[v.initializer for v in local_vars],
+                           name="%s_localinit"%(model.name))
   print("Local vars:")
   for v in local_vars:
     print(v.name)
+    
+#  @profile
   def initialize_local_vars():
     sess = tf.get_default_session()
-#    with u.timeit("x_initializer"):
-      # todo: remove this initializer
-      #      sess.run(X.initializer, feed_dict=init_dict)  # A's depend on X
-    sess.run(_sampled_labels.initializer, feed_dict=init_dict)
+    sessrun(_sampled_labels.initializer, feed_dict=init_dict)
     with u.timeit("local_init_op"):
-      #sess.run(local_init_op, feed_dict=init_dict)
-      sess.run(local_init_op, feed_dict=init_dict)
+      #sessrun(local_init_op, feed_dict=init_dict)
+      sessrun(local_init_op, feed_dict=init_dict)
   model.initialize_local_vars = initialize_local_vars
 
   return model
 
+#@profile
 def main():
   #  rng = np.random.RandomState(args.seed)
   np.random.seed(args.seed)
@@ -362,19 +397,19 @@ def main():
       kfac.Lambda.set(args.Lambda)
 
   print("Graphdef %.2f MB" %(len(str(tf.get_default_graph().as_graph_def()))/1000000.))
-  with u.capture_vars() as opt_vars:
-    if args.mode != 'run':
-      opt = tf.train.AdamOptimizer(0.001)
-    else:
-      opt = tf.train.AdamOptimizer(args.lr)
+  if args.mode != 'run':
+    opt = tf.train.AdamOptimizer(0.001)
+  else:
+    opt = tf.train.AdamOptimizer(args.lr)
+  grads_and_vars = opt.compute_gradients(model.loss,
+                                         var_list=model.trainable_vars)
       
-    grads_and_vars = opt.compute_gradients(model.loss,
-                                           var_list=model.trainable_vars)
-    grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
-    grad_new = kfac.correct(grad)
+  grad = IndexedGrad.from_grads_and_vars(grads_and_vars)
+  grad_new = kfac.correct(grad)
+  with u.capture_vars() as adam_vars:
     train_op = opt.apply_gradients(grad_new.to_grads_and_vars())
   with u.timeit("adam initialize"):
-    sess.run([v.initializer for v in opt_vars])
+    sessrun([v.initializer for v in adam_vars])
   
   losses = []
   u.record_time()
@@ -392,10 +427,10 @@ def main():
   for step in range(args.num_steps):
     
     if args.validate_every_n and step%args.validate_every_n == 0:
-      loss0, vloss0 = sess.run([model.loss, model.vloss])
+      loss0, vloss0 = sessrun([model.loss, model.vloss])
       sw.flush()
     else:
-      loss0, = sess.run([model.loss])
+      loss0, = sessrun([model.loss])
     losses.append(loss0)
 
     summary = tf.Summary()
@@ -422,6 +457,9 @@ def main():
       grad_new.update()
       train_op.run()
       u.record_time()
+
+  with open('timelines/graphdef.txt', 'w') as f:
+    f.write(str(tf.get_default_graph().as_graph_def()))
 
   u.summarize_time()
   sw.close()
