@@ -647,7 +647,7 @@ def enable_shape_inference():
   ops.set_shapes_for_outputs = original_shape_func
 
 
-def dump_with_prompt(result, fname):
+def dump_with_prompt(result, fname, no_prefix=False):
   """Helper function to ask for confirmation before overwriting."""
   location = os.getcwd()+"/data/"+fname  # TODO: factor out locations logic
   if os.path.exists(location):
@@ -657,18 +657,21 @@ def dump_with_prompt(result, fname):
     if answer.lower() != "y":
       print("skipping")
     else:
-      u.dump(result, fname)
+      u.dump(result, fname, no_prefix)
   else:
-    u.dump(result, fname)
+    u.dump(result, fname, no_prefix)
     
 
-def dump(result, fname):
+def dump(result, fname, no_prefix=False):
   """Save result to file."""
   result = result.eval() if hasattr(result, "eval") else result
   result = np.asarray(result)
   if result.shape == ():   # savetxt has problems with scalars
     result = np.expand_dims(result, 0)
-  location = os.getcwd()+"/data/"+fname
+  if no_prefix:
+    location = os.getcwd()+"/"+fname
+  else:
+    location = os.getcwd()+"/data/"+fname
   # special handling for integer datatypes
   if (
       result.dtype == np.uint8 or result.dtype == np.int8 or
@@ -1090,10 +1093,10 @@ def ossystem(line):
   print(line)
   os.system(line)
   
-def setup_experiment_run_directory(run, safe_mode=False):
+def setup_experiment_run_directory(run, safe_mode=True):
   rundir = "runs/%s"%(run,)
   if os.path.exists(rundir):
-    if safe_mode:
+    if safe_mode and not run=='default':
       answer = input("%s exists, delete? (Y/n) "%(rundir,))
       if not answer:
         answer = "y"

@@ -40,22 +40,28 @@ print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':')))
 
 use_tikhonov=False
 
+# Test generation releases
 release_name='kfac_cifar'  # release name fixes a specific test set
-release_test_fn = 'data/'+release_name+'_losses_test.csv'
+release_name='kfac_mnist'  # release name fixes a specific test set
+release_test_fn = release_name+'_losses_test.csv'
 
-if args.mode == 'test':
-  args.num_steps = 10
-  args.dataset = 'cifar'
-#  LR=0.001
-  args.Lambda=1e-1
-  args.fixed_labels = True
-  args.seed = 1
+if args.mode == 'test' or args.mode == 'record':
+  if release_name == 'kfac_cifar':
+    args.num_steps = 10
+    args.dataset = 'cifar'
+    args.Lambda=1e-1
+    args.fixed_labels = True
+    args.seed = 1
+    args.batch_size = 100
 
-prefix=args.run
-
-# Test implementation of KFAC on MNIST
+  elif release_name == 'kfac_mnist':
+    args.num_steps = 5
+    args.dataset = 'mnist'
+    args.fixed_labels = True
+    args.seed = 1
+    args.batch_size = 100
+  
 import load_MNIST
-
 import util as u
 import util
 from util import t  # transpose
@@ -363,12 +369,8 @@ def model_creator(batch_size, name="default", dtype=np.float32):
 
 #@profile
 def main():
-  #  rng = np.random.RandomState(args.seed)
   np.random.seed(args.seed)
   tf.set_random_seed(args.seed)
-
-  if args.mode == 'test':
-    args.batch_size = 100
 
   with u.timeit("session"):
     gpu_options = tf.GPUOptions(allow_growth=False)
@@ -418,10 +420,10 @@ def main():
   vloss0 = 0
 
   # todo, unify the two data outputs
-  outfn = 'data/%s_%f_%f.csv'%(prefix, args.lr, args.Lambda)
+  outfn = 'data/%s_%f_%f.csv'%(args.run, args.lr, args.Lambda)
 
   start_time = time.time()
-  sw = tf.summary.FileWriter('runs/'+prefix, sess.graph)
+  sw = tf.summary.FileWriter('runs/'+args.run, sess.graph)
   
   writer = u.BufferedWriter(outfn, 60)
   for step in range(args.num_steps):
@@ -465,10 +467,10 @@ def main():
   sw.close()
   
   if args.mode == 'record':
-    u.dump_with_prompt(losses, losses_fn)
+    u.dump_with_prompt(losses, release_test_fn)
 
   elif args.mode == 'test':
-    targets = np.loadtxt(release_test_fn, delimiter=",")
+    targets = np.loadtxt('data/'+release_test_fn, delimiter=",")
     u.check_equal(losses, targets, rtol=1e-2)
     u.summarize_difference(losses, targets)
 
