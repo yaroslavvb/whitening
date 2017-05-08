@@ -13,6 +13,7 @@ import sys
 import numpy as np
 import contextlib
 import tensorflow as tf
+import threading
 from collections import OrderedDict
 from collections import defaultdict
 
@@ -96,7 +97,7 @@ class IndexedGrad:
   def update(self):
     """Upgrade cached gradients using from their live values using
     default session."""
-    sess = tf.get_default_session()
+    sess = u.get_default_session()
     sess.run(self.update_op)
 
   def __len__(self):
@@ -214,8 +215,10 @@ class Covariance():
       
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
-    
-    pp = u.args.kfac_polyak_factor
+
+    # hack
+    # pp = u.args.kfac_polyak_factor
+    pp = 1
     if pp<1:
       self.cov = u.get_variable(name=cov_name, initializer=ii)
     else:
@@ -249,6 +252,8 @@ class Kfac():
     
     s = self       # use for private members, ie, s.some_internal_val
 
+    s.lock = threading.Lock()    # most broad lock covering all corrections
+    
     s.model = model_creator(dsize, name="kfac")
     if do_early_init:
       s.model.initialize_local_vars()
@@ -295,21 +300,39 @@ class Kfac():
     s.param_update_op = s.param.sub(s.grad_new.cached, weight=s.lr)
     assert s.param.vars_ == s.grad_new.vars_
     
-    s.sess = tf.get_default_session()
+    s.sess = u.get_default_session()
 
+  def start_stats_runners(self):
+    """Starts workers that update KFAC correction factors."""
+
+    def stats_runner_run():
+      while(True):
+        with u.timeit("kfac_update"):
+          self.model.advance_batch()
+          self.update_stats()
+
+    runner_threads = [threading.Thread(target=stats_runner_run,
+                                       args=(), daemon=True)]
+    for t in runner_threads:
+      t.start()
+    return runner_threads
+
+    
   @contextlib.contextmanager
   def read_lock(self):
     with u.timeit("read_lock"):
-      # grab lock
-      yield
-      # release lock
+      with self.lock:
+        # grab lock
+        yield
+        # release lock
 
   @contextlib.contextmanager
   def write_lock(self):
     with u.timeit("write_lock"):
-      # grab lock
-      yield
-      # release lock
+      with self.lock:
+        # grab lock
+        yield
+        # release lock
   
     
   def register_correction(self, var):

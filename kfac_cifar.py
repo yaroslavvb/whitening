@@ -43,6 +43,8 @@ parser.add_argument('--extra_kfac_batch_advance', type=int, default=0,
                     help='make kfac batches out of sync')
 parser.add_argument('--kfac_polyak_factor', type=float, default=1.0,
                     help='polyak averaging factor to use')
+parser.add_argument('--kfac_async', type=int, default=0,
+                    help='do covariance and inverses asynchronously')
 
 args = parser.parse_args()
 u.set_global_args(args)
@@ -70,6 +72,7 @@ if args.mode == 'test' or args.mode == 'record':
     args.fixed_labels = True
     args.seed = 1
     args.batch_size = 100
+    args.dataset_size = args.batch_size
   
 import load_MNIST
 
@@ -139,7 +142,7 @@ test_images = X_test.T
 full_trace_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE,
                                    output_partition_graphs=True)
 def sessrun(*args, **kwargs):
-  sess = tf.get_default_session()
+  sess = u.get_default_session()
   if not GLOBAL_PROFILE:
     return sess.run(*args, **kwargs)
   
@@ -329,8 +332,8 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   advance_batch_op = X.assign(X_full[:,start_idx:start_idx + args.batch_size])
   
   def advance_batch():
-    print("Step for model(%s) is %s"%(model.name, model.step.eval()))
-    sess = tf.get_default_session()
+    print("Step for model(%s) is %s"%(model.name, u.eval(model.step)))
+    sess = u.get_default_session()
     # TODO: get rid of _sampled_labels
     sessrun([sampled_labels.initializer, _sampled_labels.initializer])
     if args.advance_batch:
@@ -351,7 +354,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     """If reinitialize is false, will not reinitialize variables already
     initialized."""
     
-    sess = tf.get_default_session()
+    sess = u.get_default_session()
     if not reinitialize:
       uninited = sessrun(global_init_query_ops)
       # use numpy boolean indexing to select list of initializers to run
@@ -382,7 +385,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     print(v.name)
     
   def initialize_local_vars():
-    sess = tf.get_default_session()
+    sess = u.get_default_session()
     sessrun(_sampled_labels.initializer, feed_dict=init_dict)
     sessrun(X.initializer, feed_dict=init_dict)
     sessrun(local_init_op, feed_dict=init_dict)
@@ -400,6 +403,7 @@ def main():
   with u.timeit("init/session"):
     gpu_options = tf.GPUOptions(allow_growth=False)
     sess = tf.InteractiveSession(config=tf.ConfigProto(gpu_options=gpu_options))
+    u.register_default_session(sess)   # since default session is Thread-local
 
   with u.timeit("init/model_init"):
     model = model_creator(args.batch_size, name="main")
@@ -441,6 +445,9 @@ def main():
   if args.extra_kfac_batch_advance:
     kfac.model.advance_batch()  # advance kfac batch
 
+  if args.kfac_async:
+    kfac.start_stats_runners()
+    
   for step in range(args.num_steps):
     
     if args.validate_every_n and step%args.validate_every_n == 0:
@@ -456,7 +463,7 @@ def main():
                                                      vloss0))
     writer.write('%d, %f, %f, %f\n'%(step, elapsed, loss0, vloss0))
 
-    if args.method=='kfac':
+    if args.method=='kfac' and not args.kfac_async:
       kfac.model.advance_batch()
       kfac.update_stats()
 
@@ -474,7 +481,7 @@ def main():
   # TODO: get rid of u.timeit?
   
   with open('timelines/graphdef.txt', 'w') as f:
-    f.write(str(tf.get_default_graph().as_graph_def()))
+    f.write(str(u.get_default_graph().as_graph_def()))
 
   u.summarize_time()
   

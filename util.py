@@ -31,7 +31,7 @@ from scipy import linalg
 
 # TODO: speed-up tests by reusing session
 
-args = None
+args = None  # TODO: replace with object that crashes on access
 def set_global_args(local_args):
   global args
   assert args is None
@@ -877,7 +877,7 @@ class SvdWrapper:
     self.update_counter+=1
       
   def update_tf(self):
-    sess = tf.get_default_session()
+    sess = u.get_default_session()
     sess.run(self.update_tf_op)
     
   def update_scipy(self):
@@ -887,15 +887,15 @@ class SvdWrapper:
       return self.update_scipy_svd()
 
   def update_scipy_inv(self):
-    sess = tf.get_default_session()
-    target0 = self.target.eval()
+    sess = u.get_default_session()
+    target0 = sess.run(self.target)
     inv0 = linalg.inv(target0)
     feed_dict = {self.holder.inv: inv0}
     sess.run(self.update_externalinv_op, feed_dict=feed_dict)
   
   def update_scipy_svd(self):
-    sess = tf.get_default_session()
-    target0 = self.target.eval()
+    sess = u.get_default_session()
+    target0 = sess.run(self.target)
     # A=u.diag(s).v', singular vectors are columns
     # TODO: catch "ValueError: array must not contain infs or NaNs"
     try:
@@ -987,10 +987,11 @@ class VarStruct:
     self.setter = self.var.assign(self.val_)
 
   def set(self, val):
-    sess = tf.get_default_session()
+    sess = u.get_default_session()
     sess.run(self.setter, feed_dict={self.val_: val})
 
   def initialize(self):
+    sess = u.get_default_session()
     sess.run(self.setter, feed_dict={self.val_: self.val})
 
 
@@ -1179,5 +1180,34 @@ def as_int32(v):
 def add_dep(from_op, on_op):
   ge.reroute.add_control_inputs(from_op, [on_op])
 
+# Three functions below are replacements for tf default session/default graph
+# mechanisms that are global (native ones are thread-local because of thread
+# safety issues that have since been fixes (ie, mrry fixed Graph to be thread
+# safe for reading)
+
+sess = None
+def register_default_session(local_sess):
+  global sess
+  assert sess is None
+  sess = local_sess
+
+def get_default_session():
+  # hack, remove
+  return tf.get_default_session()
+  global sess
+  assert sess
+  return sess
+
+def get_default_graph():
+  global sess
+  assert sess
+  return sess.graph
+
+def eval(tensor):
+  """tensor.eval() replacement since .eval() is not multi-thread-happy"""
+  global sess
+  assert sess
+  return sess.run(tensor)
+    
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
