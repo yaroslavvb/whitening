@@ -11,6 +11,7 @@ dont_update_first_layer = False # what it says
 
 import sys
 import numpy as np
+import contextlib
 import tensorflow as tf
 from collections import OrderedDict
 from collections import defaultdict
@@ -205,16 +206,28 @@ class Covariance():
   
   def __init__(self, data, var, prefix, Lambda):
     dsize = get_batch_size(data)
+    # TODO: try adding regularizer later
     cov_op = data @ t(data) / dsize
+    ii = u.Identity(cov_op.shape[0])
     if regularize_covariances:
-      cov_op = cov_op + Lambda*u.Identity(cov_op.shape[0])
+      cov_op = cov_op + Lambda*ii
       
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
-    self.cov = u.get_variable(name=cov_name, initializer=cov_op)
+    
+    pp = u.args.kfac_polyak_factor
+    if pp<1:
+      self.cov = u.get_variable(name=cov_name, initializer=ii)
+    else:
+      self.cov = u.get_variable(name=cov_name, initializer=cov_op)
+      
     self.svd = u.SvdWrapper(target=self.cov, name=svd_name,
                             do_inverses=(inverse_method=='inverse'))
-    self.cov_update_op = self.cov.initializer
+    #    self.cov_update_op = self.cov.initializer
+    if pp<1:
+      self.cov_update_op = self.cov.assign(cov_op*(1-pp)+self.cov*pp)
+    else:
+      self.cov_update_op = self.cov.assign(cov_op)
 
 
 class KfacCorrectionInfo():
@@ -284,6 +297,21 @@ class Kfac():
     
     s.sess = tf.get_default_session()
 
+  @contextlib.contextmanager
+  def read_lock(self):
+    with u.timeit("read_lock"):
+      # grab lock
+      yield
+      # release lock
+
+  @contextlib.contextmanager
+  def write_lock(self):
+    with u.timeit("write_lock"):
+      # grab lock
+      yield
+      # release lock
+  
+    
   def register_correction(self, var):
     self.kfac_correction_dict[var] = KfacCorrectionInfo()
     
@@ -366,10 +394,11 @@ class Kfac():
     # update SVDs
     corrected_vars = list(s)
     with u.timeit("svd"):
-      for var in s:
-        if not dont_update_first_layer or s[var].A.svd.update_counter==0:
-          s[var].A.svd.update()
-        s[var].B2.svd.update()
+      with s.write_lock():
+        for var in s:
+          if not dont_update_first_layer or s[var].A.svd.update_counter==0:
+            s[var].A.svd.update()
+          s[var].B2.svd.update()
 
   def needs_correction(self, var):
     """Returns whether given variable is getting kfac corrected."""
@@ -438,6 +467,9 @@ class Kfac():
         B2_svd = s[var].B2.svd 
         ops.extend(A_svd.init_ops)
         ops.extend(B2_svd.init_ops)
+        ops.append(s[var].A.cov.initializer)
+        ops.append(s[var].B2.cov.initializer)
+
     s.run(ops)
 
 

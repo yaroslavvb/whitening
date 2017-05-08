@@ -7,6 +7,9 @@ import json
 import os
 import sys
 import time
+import util as u
+import util
+from util import t  # transpose
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
@@ -30,12 +33,19 @@ parser.add_argument('--dataset', type=str, default="cifar",
 # todo: split between optimizer batch size and stats batch size
 parser.add_argument('-b', '--batch_size', type=int, default=10000,
                     help='batch size')
-parser.add_argument('--dataset_size', type=int, default=10000,
+parser.add_argument('--kfac_batch_size', type=int, default=10000,
+                    help='batch size to use for KFAC stats')
+parser.add_argument('--dataset_size', type=int, default=1000000000,
                     help='truncate dataset at this value')
 parser.add_argument('--advance_batch', type=int, default=0,
                     help='whether to advance batch')
+parser.add_argument('--extra_kfac_batch_advance', type=int, default=0,
+                    help='make kfac batches out of sync')
+parser.add_argument('--kfac_polyak_factor', type=float, default=1.0,
+                    help='polyak averaging factor to use')
 
 args = parser.parse_args()
+u.set_global_args(args)
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':')))
 
 use_tikhonov=False
@@ -62,9 +72,6 @@ if args.mode == 'test' or args.mode == 'record':
     args.batch_size = 100
   
 import load_MNIST
-import util as u
-import util
-from util import t  # transpose
 
 import kfac as kfac_lib
 from kfac import Model
@@ -232,8 +239,8 @@ def model_creator(batch_size, name="default", dtype=np.float32):
 
   # Full dataset from which new batches are sampled
   X_full = init_var(train_images, "X_full", is_global=True)
-  
-  X = init_var(patches, "X", is_global=True)
+
+  X = init_var(patches, "X", is_global=False)  # stores local batch per model
   W = [None]*n
   W.insert(0, X)
   A = [None]*(n+2)
@@ -312,16 +319,23 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   model.local_vars = local_vars
   model.trainable_vars = W[1:]
 
-
-  model.step = init_var(0, "step", is_global=False)
+  # todo, we have 3 places where model step is tracked, reduce
+  model.step = init_var(u.as_int32(0), "step", is_global=False)
   advance_step_op = model.step.assign_add(1)
+  assert get_batch_size(X_full) % args.batch_size == 0
+  batches_per_dataset = (get_batch_size(X_full) // args.batch_size)
+  batch_idx = tf.mod(model.step, batches_per_dataset)
+  start_idx = batch_idx * args.batch_size
+  advance_batch_op = X.assign(X_full[:,start_idx:start_idx + args.batch_size])
+  
   def advance_batch():
     print("Step for model(%s) is %s"%(model.name, model.step.eval()))
     sess = tf.get_default_session()
     # TODO: get rid of _sampled_labels
     sessrun([sampled_labels.initializer, _sampled_labels.initializer])
     if args.advance_batch:
-      pass
+      with u.timeit("advance_batch"):
+        sessrun(advance_batch_op)
     sessrun(advance_step_op)
     
   model.advance_batch = advance_batch
@@ -353,6 +367,14 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     sessrun(to_initialize, feed_dict=init_dict)
   model.initialize_global_vars = initialize_global_vars
 
+  # didn't quite work (can't initialize var in same run call as deps likely)
+  # enforce that batch is initialized before everything
+  # except fake labels opa
+  # for v in local_vars:
+  #   if v != X and v != sampled_labels and v != _sampled_labels:
+  #     print("Adding dep %s on %s"%(v.initializer.name, X.initializer.name))
+  #     u.add_dep(v.initializer, on_op=X.initializer)
+      
   local_init_op = tf.group(*[v.initializer for v in local_vars],
                            name="%s_localinit"%(model.name))
   print("Local vars:")
@@ -362,6 +384,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   def initialize_local_vars():
     sess = tf.get_default_session()
     sessrun(_sampled_labels.initializer, feed_dict=init_dict)
+    sessrun(X.initializer, feed_dict=init_dict)
     sessrun(local_init_op, feed_dict=init_dict)
   model.initialize_local_vars = initialize_local_vars
 
@@ -384,11 +407,11 @@ def main():
     model.initialize_local_vars()
   
   with u.timeit("init/kfac_init"):
-    kfac = Kfac(model_creator, args.batch_size) 
+    kfac = Kfac(model_creator, args.kfac_batch_size) 
     kfac.model.initialize_global_vars(verbose=False)
     kfac.model.initialize_local_vars()
-    kfac.reset()    # resets optimization variables (not model variables)
     kfac.Lambda.set(args.Lambda)
+    kfac.reset()    # resets optimization variables (not model variables)
 
   if args.mode != 'run':
     opt = tf.train.AdamOptimizer(0.001)
@@ -415,6 +438,9 @@ def main():
   writer = u.BufferedWriter(outfn, 60)   # get rid?
 
   start_time = time.time()
+  if args.extra_kfac_batch_advance:
+    kfac.model.advance_batch()  # advance kfac batch
+
   for step in range(args.num_steps):
     
     if args.validate_every_n and step%args.validate_every_n == 0:
@@ -437,7 +463,8 @@ def main():
     with u.timeit("train"):
       model.advance_batch()
       grad.update()
-      grad_new.update()
+      with kfac.read_lock():
+        grad_new.update()
       train_op.run()
       u.record_time()
 

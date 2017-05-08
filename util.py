@@ -9,6 +9,7 @@ import sys
 import tensorflow as tf
 import time
 import traceback
+from tensorflow.contrib import graph_editor as ge
 from collections import OrderedDict
 from collections import defaultdict
 
@@ -16,6 +17,7 @@ from collections import defaultdict
 # this module unmodified
 util = sys.modules[__name__]   
 u = util
+
 
 default_dtype = tf.float32
 USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
@@ -28,6 +30,12 @@ if USE_MKL_SVD:
 from scipy import linalg
 
 # TODO: speed-up tests by reusing session
+
+args = None
+def set_global_args(local_args):
+  global args
+  assert args is None
+  args = local_args
 
 def concat_blocks(blocks, validate_dims=True):
   """Takes 2d grid of blocks representing matrices and concatenates to single
@@ -1163,6 +1171,13 @@ class TensorboardLogger:
     self.step+=1
     self.summary = tf.Summary()
 
+
+def as_int32(v):
+  """Convert to int32 dtype."""
+  return np.dtype(np.int32).type(v)
+
+def add_dep(from_op, on_op):
+  ge.reroute.add_control_inputs(from_op, [on_op])
 
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
