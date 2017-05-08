@@ -39,9 +39,23 @@ if __name__=='__main__':
   tf.set_random_seed(0)
   dtype = np.float32
   
-  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
+  #  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
+
+  from keras.datasets import mnist
+  (X_train, y_train), (X_test, y_test) = mnist.load_data()
+  X_train = X_train.astype(np.float32)
+  X_train = X_train.reshape((X_train.shape[0], -1))
+  X_test = X_test.astype(np.float32)
+  X_test = X_test.reshape((X_test.shape[0], -1))
+  X_train /= 255
+  X_test /= 255
+
+  
+
   dsize = 10000
-  patches = train_images[:,:dsize];
+  #patches = train_images[:,:dsize];
+  patches = X_train[:dsize,:].T
+  
   fs = [dsize, 28*28, 196, 28*28]
 
   fs=fs
