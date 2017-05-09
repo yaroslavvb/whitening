@@ -12,7 +12,6 @@ from keras import optimizers
 from weightnorm import SGDWithWeightnorm
 from weightnorm import AdamWithWeightnorm
 
-import load_MNIST
 import util as u
 import numpy as np
 import scipy
@@ -26,8 +25,6 @@ import sys
 prefix = "keras_large"  # large batch
 epochs = 20000
 # 2 sec per epoch, 12 hours
-
-
 
 
 from keras import optimizers
@@ -76,11 +73,19 @@ start_time = 0
 if __name__=='__main__':
   numpy.random.seed(0)
   
-  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte')
   dsize = 10000
-  X_train = train_images[:,:dsize].T
-  X_test = train_images[:,-dsize:].T
-  
+
+
+  from keras.datasets import mnist
+  (X_train, y_train), (X_test, y_test) = mnist.load_data()
+  X_train = X_train.astype(np.float32)
+  X_train = X_train.reshape((X_train.shape[0], -1))
+  X_train = X_train[:dsize,:]
+  X_test = X_test.astype(np.float32)
+  X_test = X_test.reshape((X_test.shape[0], -1))
+  X_train /= 255
+  X_test /= 255
+
   optimizer = AdamWithWeightnorm()
 
   model = Sequential()
