@@ -72,6 +72,7 @@ if args.mode == 'test' or args.mode == 'record':
     args.fixed_labels = True
     args.seed = 1
     args.batch_size = 100
+    args.kfac_batch_size = 100
     args.dataset_size = args.batch_size
   
 import load_MNIST
