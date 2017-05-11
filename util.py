@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import socket
 import contextlib
 import inspect
@@ -734,8 +735,9 @@ class timeit:
     interval_ms = 1000*(self.end - self.start)
     global_timeit_dict.setdefault(self.tag, []).append(interval_ms)
     print("    %s Elapsed: %.2f ms"%(self.tag, interval_ms))
-    logger = u.get_last_logger()
-    logger('time/'+self.tag, interval_ms)
+    logger = u.get_last_logger(skip_existence_check=True)
+    if logger:
+      logger('time/'+self.tag, interval_ms)
 
 
 def timeit_summarize():
@@ -1129,9 +1131,12 @@ def setup_experiment_run_directory(run, safe_mode=True):
 GLOBAL_RUNS_DIRECTORY='runs'
 global_last_logger = None
 
-def get_last_logger():
+def get_last_logger(skip_existence_check=False):
+  """Returns last logger, if skip_existence_check is set, doesn't
+  throw error if logger doesn't exist."""
   global global_last_logger
-  assert global_last_logger
+  if not skip_existence_check:
+    assert global_last_logger
   return global_last_logger
 
 class TensorboardLogger:
@@ -1165,8 +1170,9 @@ class TensorboardLogger:
 
   def next_step(self):
     new_timestamp = time.perf_counter()
+    interval_ms = 1000*(new_timestamp - self.last_timestamp)
     self.summary.value.add(tag='time/step',
-                           simple_value=(new_timestamp-self.last_timestamp))
+                           simple_value=interval_ms)
     self.last_timestamp = new_timestamp
     self.summary_writer.add_summary(self.summary, self.step)
     self.step+=1

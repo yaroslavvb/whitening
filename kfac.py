@@ -322,18 +322,13 @@ class Kfac():
   def read_lock(self):
     with u.timeit("read_lock"):
       with self.lock:
-        # grab lock
         yield
-        # release lock
 
   @contextlib.contextmanager
   def write_lock(self):
     with u.timeit("write_lock"):
       with self.lock:
-        # grab lock
-        yield
-        # release lock
-  
+        yield  
     
   def register_correction(self, var):
     self.kfac_correction_dict[var] = KfacCorrectionInfo()

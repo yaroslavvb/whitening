@@ -457,7 +457,7 @@ def main():
       loss0, = sessrun([model.loss])
     losses.append(loss0)  # TODO: remove this
 
-    logger('loss', loss0, 'vloss', vloss0)
+    logger('loss/loss', loss0, 'loss/vloss', vloss0)
     
     elapsed = time.time()-start_time
     print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,

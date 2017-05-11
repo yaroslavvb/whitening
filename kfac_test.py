@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 LR=0.02
 LAMBDA=1e-1
 use_tikhonov=False
@@ -53,12 +55,12 @@ def ng_init(rows, cols):
   return result.reshape((rows, cols))
 
 
-def model_creator(batch_size, dtype=np.float32):
+def model_creator(batch_size, name="defaultmodel", dtype=np.float32):
   """Create MNIST autoencoder model. Dataset is part of model."""
 
   global hack_global_init_dict
   
-  model = Model()
+  model = Model(name)
 
   # TODO: actually use batch_size
   init_dict = {}   # todo: rename to feed_dict?

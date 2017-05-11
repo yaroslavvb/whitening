@@ -85,10 +85,10 @@ def ng_init(rows, cols):
   return result.reshape((rows, cols))
 
 
-def model_creator(batch_size, dtype=np.float32):
+def model_creator(batch_size, name='defaultmodel', dtype=np.float32):
   """Create MNIST autoencoder model. Dataset is part of model."""
 
-  model = Model()
+  model = Model(name)
 
   init_dict = {}
   global_vars = []
