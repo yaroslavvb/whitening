@@ -655,6 +655,16 @@ def disable_shape_inference():
 def enable_shape_inference():
   ops.set_shapes_for_outputs = original_shape_func
 
+# work-around for graph_editor.copy_with_input_replacements scaling
+# quadratically with size of the graph
+from tensorflow.contrib.graph_editor import transform
+original_assign_renamed_collections_handler = transform.assign_renamed_collections_handler
+def dummy_collections_handler(info, elem, elem_): pass
+def disable_collections_handler():
+  transform.assign_renamed_collections_handler = dummy_collections_handler
+def enable_collections_handler():
+  transform.assign_renamed_collections_handler = original_assign_renamed_collections_handler
+
 
 def dump_with_prompt(result, fname, no_prefix=False):
   """Helper function to ask for confirmation before overwriting."""
@@ -738,6 +748,11 @@ class timeit:
     logger = u.get_last_logger(skip_existence_check=True)
     if logger:
       logger('time/'+self.tag, interval_ms)
+
+global_record_dict = OrderedDict()
+def record(tag, stat):
+    global global_record_dict
+    global_record_dict.setdefault(tag, []).append(stat)
 
 
 def timeit_summarize():
