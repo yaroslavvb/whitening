@@ -5,6 +5,8 @@ inverse_methods = ["pseudo_inverse", "inverse"]
 inverse_method = "inverse"
 assert inverse_method in inverse_methods
 
+numeric_inverse = False
+
 adaptive_step = False     # adjust step length based on predicted decrease
 step_rejection = False    # reject bad steps
 dont_update_first_layer = False # what it says
@@ -206,6 +208,8 @@ class Covariance():
   """
   
   def __init__(self, data, var, prefix, Lambda):
+    global numeric_inverse
+    
     dsize = get_batch_size(data)
     # TODO: try adding regularizer later
     cov_op = data @ t(data) / dsize

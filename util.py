@@ -731,8 +731,12 @@ def L2(t):
             t.__class__.__name__.endswith('Variable'))
   return tf.reduce_sum(tf.square(t))
 
+
 global_timeit_dict = OrderedDict()
 class timeit:
+  """Decorator to measure length of time spent in the block in millis and log
+  it to TensorBoard."""
+  
   def __init__(self, tag=""):
     self.tag = tag
     
@@ -747,7 +751,12 @@ class timeit:
     print("    %s Elapsed: %.2f ms"%(self.tag, interval_ms))
     logger = u.get_last_logger(skip_existence_check=True)
     if logger:
-      logger('time/'+self.tag, interval_ms)
+      newtag = 'time/'+self.tag
+      # since tensorboard doesn't allow hierarchical tags, merge init times
+      if newtag.startswith('time/init'):
+        newtag = newtag.replace('time/init', 'timeinit')
+      logger(newtag, interval_ms)
+
 
 global_record_dict = OrderedDict()
 def record(tag, stat):

@@ -45,6 +45,8 @@ parser.add_argument('--kfac_polyak_factor', type=float, default=1.0,
                     help='polyak averaging factor to use')
 parser.add_argument('--kfac_async', type=int, default=0,
                     help='do covariance and inverses asynchronously')
+parser.add_argument('-nr', '--numeric_inverse', type=int, default=0,
+                    help='estimate inverse numerically')
 
 args = parser.parse_args()
 u.set_global_args(args)
@@ -410,7 +412,8 @@ def main():
     model = model_creator(args.batch_size, name="main")
     model.initialize_global_vars(verbose=True)
     model.initialize_local_vars()
-  
+
+  kfac_lib.numeric_inverse = args.numeric_inverse
   with u.timeit("init/kfac_init"):
     kfac = Kfac(model_creator, args.kfac_batch_size) 
     kfac.model.initialize_global_vars(verbose=False)
