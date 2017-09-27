@@ -3,6 +3,13 @@ GLOBAL_PROFILE = False   # do timelines
 
 import os
 os.environ['TF_CUDNN_USE_AUTOTUNE']='0'  # autotune adds random memory spikes
+# hack to work around broken initializer
+from tensorflow.python.ops import variables
+def passthrough(obj, value): return value
+try:
+  variables.Variable._build_initializer_expr=passthrough
+except: # older versions of TF don't have this
+  pass
 
 from tensorflow.python.client import timeline
 import argparse
@@ -13,72 +20,14 @@ import util as u
 import util
 from util import t  # transpose
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
-parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
-parser.add_argument('--method', type=str, default="kfac", help='turn on KFAC')
-parser.add_argument('--fixed_labels', type=int, default=0,
-                    help='if true, fix synthetic labels to all 1s')
-parser.add_argument('--lr', type=float, default=0.001,
-                    help='learning rate to use')
-parser.add_argument('--validate_every_n', type=int, default=10,
-                    help='set to positive number to measure validation')
-# lambda tuning graphs: https://wolfr.am/lojcyhYz
-parser.add_argument('-L', '--Lambda', type=float, default=0.01,
-                    help='lambda value')
-parser.add_argument('-r', '--run', type=str, default='default',
-                    help='name of experiment run')
-parser.add_argument('-n', '--num_steps', type=int, default=1000000,
-                    help='number of steps')
-parser.add_argument('--dataset', type=str, default="cifar",
-                    help='which dataset to use')
-# todo: split between optimizer batch size and stats batch size
-parser.add_argument('-b', '--batch_size', type=int, default=10000,
-                    help='batch size')
-parser.add_argument('--kfac_batch_size', type=int, default=10000,
-                    help='batch size to use for KFAC stats')
-parser.add_argument('--dataset_size', type=int, default=1000000000,
-                    help='truncate dataset at this value')
-parser.add_argument('--advance_batch', type=int, default=0,
-                    help='whether to advance batch')
-parser.add_argument('--extra_kfac_batch_advance', type=int, default=0,
-                    help='make kfac batches out of sync')
-parser.add_argument('--kfac_polyak_factor', type=float, default=1.0,
-                    help='polyak averaging factor to use')
-parser.add_argument('--kfac_async', type=int, default=0,
-                    help='do covariance and inverses asynchronously')
-parser.add_argument('-nr', '--numeric_inverse', type=int, default=0,
-                    help='estimate inverse numerically')
-
-args = parser.parse_args()
-u.set_global_args(args)
-print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':')))
-
 use_tikhonov=False
 
 # Test generation releases
-release_name='kfac_cifar'  # release name fixes a specific test set
-release_name='kfac_mnist'  # release name fixes a specific test set
+release_name='kfac_cifar'  #  broken, in tests was 294.863098 after 10 steps, now 350.697174
+release_name='kfac_mnist'  # release name fixes a specific test set#
+#release_name='kfac_tiny'  # release name fixes a specific test set
 release_test_fn = release_name+'_losses_test.csv'
 
-if args.mode == 'test' or args.mode == 'record':
-  if release_name == 'kfac_cifar':
-    args.num_steps = 10
-    args.dataset = 'cifar'
-    args.Lambda=1e-1
-    args.fixed_labels = True
-    args.seed = 1
-    args.batch_size = 100
-
-  elif release_name == 'kfac_mnist':
-    args.num_steps = 5
-    args.dataset = 'mnist'
-    args.fixed_labels = True
-    args.seed = 1
-    args.batch_size = 100
-    args.kfac_batch_size = 100
-    args.dataset_size = args.batch_size
-  
 import load_MNIST
 
 import kfac as kfac_lib
@@ -99,11 +48,6 @@ purely_relu = True     # convert sigmoids into ReLUs
 regularized_svd = True # kfac_lib.regularized_svd # TODO: delete this
 
 
-rundir = u.setup_experiment_run_directory(args.run)
-with open(rundir+'/args.txt', 'w') as f:
-  f.write(json.dumps(vars(args), indent=4, separators=(',',':')))
-  f.write('\n')
-
 # TODO: get rid
 def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
   r = np.sqrt(6) / np.sqrt(s1 + s2 + 1)
@@ -118,31 +62,6 @@ def ng_init(rows, cols):
   result = np.random.random(rows*cols)*2*r-r
   return result.reshape((rows, cols))
 
-
-if args.dataset == 'cifar':
-  # load data globally once
-  from keras.datasets import cifar10
-  (X_train, y_train), (X_test, y_test) = cifar10.load_data()
-  X_train = X_train.astype(np.float32)
-  X_train = X_train.reshape((X_train.shape[0], -1))
-  X_test = X_test.astype(np.float32)
-  X_test = X_test.reshape((X_test.shape[0], -1))
-  X_train /= 255
-  X_test /= 255
-elif args.dataset == 'mnist':
-  train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(np.float32)
-  # todo: load test images from separate file like with cifar
-  # todo: remove this extra truncation since it happens later
-  #  test_patches = train_images[:,-args.dataset_size:]
-  test_images = load_MNIST.load_MNIST_images('data/t10k-images-idx3-ubyte').astype(np.float32)
-
-  X_train = train_images[:,:args.dataset_size].T   # batch last
-  X_test = test_images.T # test_patches.T
-  
-  
-# todo: rename to better names
-train_images = X_train.T  # batch first
-test_images = X_test.T
 
 full_trace_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE,
                                    output_partition_graphs=True)
@@ -239,8 +158,11 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     input_dim = 28*28
   else:
     assert False
-  fs = [args.batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
-        input_dim]
+  if release_name == 'kfac_tiny':
+    fs = [args.batch_size, input_dim, 196, input_dim]
+  else:
+    fs = [args.batch_size, input_dim, 1024, 1024, 1024, 196, 1024, 1024, 1024,
+          input_dim]
     
   def f(i): return fs[i+1]  # W[i] has shape f[i] x f[i-1]
   n = len(fs) - 2
@@ -518,4 +440,107 @@ def main():
 
 
 if __name__ == '__main__':
+
+  parser = argparse.ArgumentParser()
+  parser.add_argument('-m', '--mode', type=str, default='run', help='record to record test data, test to perform test, run to run training for longer')
+  parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
+  parser.add_argument('--method', type=str, default="kfac", help='turn on KFAC')
+  parser.add_argument('--fixed_labels', type=int, default=0,
+                      help='if true, fix synthetic labels to all 1s')
+  parser.add_argument('--lr', type=float, default=0.001,
+                      help='learning rate to use')
+  parser.add_argument('--validate_every_n', type=int, default=10,
+                      help='set to positive number to measure validation')
+  # lambda tuning graphs: https://wolfr.am/lojcyhYz
+  parser.add_argument('-L', '--Lambda', type=float, default=0.01,
+                      help='lambda value')
+  parser.add_argument('-r', '--run', type=str, default='default',
+                      help='name of experiment run')
+  parser.add_argument('-n', '--num_steps', type=int, default=1000000,
+                      help='number of steps')
+  parser.add_argument('--dataset', type=str, default="cifar",
+                      help='which dataset to use')
+  # todo: split between optimizer batch size and stats batch size
+  parser.add_argument('-b', '--batch_size', type=int, default=10000,
+                      help='batch size')
+  parser.add_argument('--kfac_batch_size', type=int, default=10000,
+                      help='batch size to use for KFAC stats')
+  parser.add_argument('--dataset_size', type=int, default=1000000000,
+                      help='truncate dataset at this value')
+  parser.add_argument('--advance_batch', type=int, default=0,
+                      help='whether to advance batch')
+  parser.add_argument('--extra_kfac_batch_advance', type=int, default=0,
+                      help='make kfac batches out of sync')
+  parser.add_argument('--kfac_polyak_factor', type=float, default=1.0,
+                      help='polyak averaging factor to use')
+  parser.add_argument('--kfac_async', type=int, default=0,
+                      help='do covariance and inverses asynchronously')
+  parser.add_argument('-nr', '--numeric_inverse', type=int, default=0,
+                      help='estimate inverse numerically')
+
+  args = parser.parse_args()
+  u.set_global_args(args)
+  print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':')))
+
+  if args.mode == 'test' or args.mode == 'record':
+    if release_name == 'kfac_cifar':
+      args.num_steps = 10
+      args.dataset = 'cifar'
+      args.Lambda=1e-1
+      args.fixed_labels = True
+      args.seed = 1
+      args.batch_size = 100
+
+    elif release_name == 'kfac_mnist':
+      args.num_steps = 5
+      args.dataset = 'mnist'
+      args.fixed_labels = True
+      args.seed = 1
+      args.batch_size = 100
+      args.kfac_batch_size = 100
+      args.dataset_size = args.batch_size
+
+    elif release_name == 'kfac_tiny':
+      args.num_steps = 5
+      args.dataset = 'mnist'
+      args.fixed_labels = True
+      args.seed = 1
+      args.batch_size = 100
+      args.kfac_batch_size = 100
+      args.dataset_size = args.batch_size
+
+    rundir = u.setup_experiment_run_directory(args.run)
+    with open(rundir+'/args.txt', 'w') as f:
+      f.write(json.dumps(vars(args), indent=4, separators=(',',':')))
+      f.write('\n')
+
+  if args.dataset == 'cifar':
+    # load data globally once
+    from keras.datasets import cifar10
+    (X_train, y_train), (X_test, y_test) = cifar10.load_data()
+    X_train = X_train.astype(np.float32)
+    X_train = X_train.reshape((X_train.shape[0], -1))
+    X_test = X_test.astype(np.float32)
+    X_test = X_test.reshape((X_test.shape[0], -1))
+    X_train /= 255
+    X_test /= 255
+    
+    # todo: rename to better names
+    train_images = X_train.T  # batch first
+    test_images = X_test.T
+  elif args.dataset == 'mnist':
+    train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(np.float32)
+    # todo: load test images from separate file like with cifar
+    # todo: remove this extra truncation since it happens later
+    #  test_patches = train_images[:,-args.dataset_size:]
+    test_images = load_MNIST.load_MNIST_images('data/t10k-images-idx3-ubyte').astype(np.float32)
+
+    X_train = train_images[:,:args.dataset_size].T   # batch last
+    X_test = test_images.T # test_patches.T
+
+
+    # todo: rename to better names
+    train_images = X_train.T  # batch first
+    test_images = X_test.T
+
   main()
