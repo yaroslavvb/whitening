@@ -1,10 +1,12 @@
 #!/usr/bin/env python
-GLOBAL_PROFILE = False
+GLOBAL_PROFILE = False   # do timelines
+
+import os
+os.environ['TF_CUDNN_USE_AUTOTUNE']='0'  # autotune adds random memory spikes
 
 from tensorflow.python.client import timeline
 import argparse
 import json
-import os
 import sys
 import time
 import util as u
@@ -404,8 +406,25 @@ def main():
   logger = u.TensorboardLogger(args.run)
   
   with u.timeit("init/session"):
+
+    rewrite_options=None
+    try:
+      from tensorflow.core.protobuf import rewriter_config_pb2
+      rewrite_options = rewriter_config_pb2.RewriterConfig(
+        disable_model_pruning=True,
+        constant_folding=rewriter_config_pb2.RewriterConfig.OFF,
+        memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL)
+    except:
+      pass
+      
+    optimizer_options = tf.OptimizerOptions(opt_level=tf.OptimizerOptions.L0)
+    graph_options=tf.GraphOptions(optimizer_options=optimizer_options,
+                                  rewrite_options=rewrite_options)
     gpu_options = tf.GPUOptions(allow_growth=False)
-    sess = tf.InteractiveSession(config=tf.ConfigProto(gpu_options=gpu_options))
+    config = tf.ConfigProto(graph_options=graph_options,
+                            gpu_options=gpu_options)
+
+    sess = tf.InteractiveSession(config=config)
     u.register_default_session(sess)   # since default session is Thread-local
 
   with u.timeit("init/model_init"):

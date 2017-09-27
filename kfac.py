@@ -492,6 +492,11 @@ class Kfac():
         ops.append(s[var].A.cov.initializer)
         ops.append(s[var].B2.cov.initializer)
 
+    # in new TensorFlow this breaks, probably because of
+    # https://github.com/tensorflow/tensorflow/commit/07adc2ea910de715d31e16a019fcbcccb575e931
+    # sometimes get "need to feed" placeholder error
+    # sometimes do not get this error, but spend two minutes inside
+    # _build_initializer_expr
     s.run(ops)
 
 
@@ -561,7 +566,10 @@ class Kfac():
   def set(self, var, value):
     s.run(var.setter, feed_dict={var.val_: value})
 
+  # TODO: *ops make things weird ([op] becomes [[op]])
   def run(self, *ops):
+    """Replacement for sess.run which works with custom types."""
+    
     new_ops = []
     for op in ops:
       if isinstance(op, VarStruct):
