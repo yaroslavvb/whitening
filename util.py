@@ -616,6 +616,7 @@ def record_time():
   new_time = time.perf_counter()
   global_time_list.append(new_time - global_last_time)
   global_last_time = time.perf_counter()
+  print("step: %.2f"%(global_time_list[-1]*1000))
 
 def last_time():
   global global_last_time, global_time_list
@@ -727,7 +728,7 @@ def L2(t):
   if t.__class__.__name__=='Grads':
     t = t.f
   else:
-    assert (t.__class__.__name__ == 'Tensor' or
+    assert (t.__class__.__name__.endswith('Tensor') or
             t.__class__.__name__.endswith('Variable'))
   return tf.reduce_sum(tf.square(t))
 
@@ -835,12 +836,13 @@ class SvdWrapper:
   Access result as TF vars: wrapper.s, wrapper.u, wrapper.v
   """
   
-  def __init__(self, target, name, do_inverses=False):
+  def __init__(self, target, name, do_inverses=False, use_resource=False):
     self.name = name
     self.target = target
     self.do_inverses = do_inverses
     self.tf_svd = SvdTuple(tf.svd(target))
     self.update_counter = 0
+    self.use_resource = use_resource
 
     self.init = SvdTuple(
       ones(target.shape[0], name=name+"_s_init"),
@@ -854,25 +856,37 @@ class SvdWrapper:
     assert self.tf_svd.v.shape == self.init.v.shape
     #    assert self.tf_svd.inv.shape == self.init.inv.shape
 
-    self.cached = SvdTuple(
-      tf.Variable(self.init.s, name=name+"_s"),
-      tf.Variable(self.init.u, name=name+"_u"),
-      tf.Variable(self.init.v, name=name+"_v"),
-      tf.Variable(self.init.inv, name=name+"_inv"),
-    )
+    if not self.use_resource:
+      self.cached = SvdTuple(
+        tf.Variable(self.init.s, name=name+"_s"),
+        tf.Variable(self.init.u, name=name+"_u"),
+        tf.Variable(self.init.v, name=name+"_v"),
+        tf.Variable(self.init.inv, name=name+"_inv"),
+      )
+    else:
+      from tensorflow.python.ops import resource_variable_ops as rr
+      self.cached = SvdTuple(
+        rr.ResourceVariable(self.init.s, name=name+"_s"),
+        rr.ResourceVariable(self.init.u, name=name+"_u"),
+        rr.ResourceVariable(self.init.v, name=name+"_v"),
+        rr.ResourceVariable(self.init.inv, name=name+"_inv"),
+      )
 
     self.s = self.cached.s
     self.u = self.cached.u
     self.v = self.cached.v
     self.inv = self.cached.inv
-    
-    self.holder = SvdTuple(
-      tf.placeholder(default_dtype, shape=self.cached.s.shape, name=name+"_s_holder"),
-      tf.placeholder(default_dtype, shape=self.cached.u.shape, name=name+"_u_holder"),
-      tf.placeholder(default_dtype, shape=self.cached.v.shape, name=name+"_v_holder"),
-      tf.placeholder(default_dtype, shape=self.cached.inv.shape, name=name+"_inv_holder")
-    )
 
+    if not use_resource:
+      self.holder = SvdTuple(
+        tf.placeholder(default_dtype, shape=self.cached.s.shape, name=name+"_s_holder"),
+        tf.placeholder(default_dtype, shape=self.cached.u.shape, name=name+"_u_holder"),
+        tf.placeholder(default_dtype, shape=self.cached.v.shape, name=name+"_v_holder"),
+        tf.placeholder(default_dtype, shape=self.cached.inv.shape, name=name+"_inv_holder")
+      )
+    else:
+      self.holder = self.init
+      
     self.update_tf_op = tf.group(
       self.cached.s.assign(self.tf_svd.s),
       self.cached.u.assign(self.tf_svd.u),

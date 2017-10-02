@@ -7,6 +7,13 @@
 # experiment prefixes
 prefix = "small_final" # for checkin
 
+
+# for line profiling
+try:
+    profile  # throws an exception when profile isn't defined
+except NameError:
+    profile = lambda x: x   # if it's not defined simply ignore the decorator.
+
 from tensorflow.python.ops import variables
 def passthrough(obj, value): return value
 try:
@@ -26,7 +33,7 @@ do_line_search = False       # line-search and dump values at each iter
 import sys
 whitening_mode = 4                 # 0 for gradient, 4 for full whitening
 whiten_every_n_steps = 1           # how often to whiten
-report_frequency = 3               # how often to print loss
+report_frequency = 1               # how often to print loss
 
 num_steps = 20000 if whitening_mode==0 else 20
 util.USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
@@ -64,8 +71,8 @@ def W_uniform(s1, s2): # uniform weight init from Ng UFLDL
   result = np.random.random(2*s2*s1)*2*r-r
   return result
 
-
-if __name__=='__main__':
+@profile
+def main():
   np.random.seed(0)
   tf.set_random_seed(0)
   
@@ -437,5 +444,9 @@ if __name__=='__main__':
     targets = np.loadtxt("data/kfac_small_final_linux.csv", delimiter=",")
 
   u.check_equal(targets, losses[:len(targets)], rtol=1e-1)
+  u.summarize_time()
   print("Test passed")
 
+
+if __name__=='__main__':
+  main()
