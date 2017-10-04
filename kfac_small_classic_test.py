@@ -27,7 +27,7 @@ import util as u
 
 drop_l2 = True               # drop L2 term
 drop_sparsity = True         # drop KL term
-use_gpu = True
+use_gpu = False
 do_line_search = False       # line-search and dump values at each iter
 
 import sys
@@ -281,8 +281,19 @@ def main():
       
   init_op = tf.global_variables_initializer()
   #  tf.get_default_graph().finalize()
+
+  from tensorflow.core.protobuf import rewriter_config_pb2
   
-  sess = tf.InteractiveSession()
+  rewrite_options = rewriter_config_pb2.RewriterConfig(
+    disable_model_pruning=True,
+    constant_folding=rewriter_config_pb2.RewriterConfig.OFF,
+    memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL)
+  optimizer_options = tf.OptimizerOptions(opt_level=tf.OptimizerOptions.L0)
+  graph_options=tf.GraphOptions(optimizer_options=optimizer_options,
+                                rewrite_options=rewrite_options)
+  config = tf.ConfigProto(graph_options=graph_options)
+  #sess = tf.Session(config=config)
+  sess = tf.InteractiveSession(config=config)
   sess.run(Wf.initializer, feed_dict=init_dict)
   sess.run(X.initializer, feed_dict=init_dict)
   advance_batch()
