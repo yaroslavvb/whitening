@@ -34,6 +34,8 @@ from scipy import linalg
 
 args = None  # TODO: replace with object that crashes on access
 def set_global_args(local_args):
+  """Sets args to be reused across several modules. Access as
+  util.args.somesetting """
   global args
   assert args is None
   args = local_args
