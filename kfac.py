@@ -100,7 +100,8 @@ class IndexedGrad:
     """Upgrade cached gradients using from their live values using
     default session."""
     sess = u.get_default_session()
-    sess.run(self.update_op)
+    #    sess.run(self.update_op)
+    u.run(self.update_op)
 
   def __len__(self):
     return self.grads_dict.__len__()
@@ -213,9 +214,12 @@ class Covariance():
     dsize = get_batch_size(data)
     # TODO: try adding regularizer later
     cov_op = data @ t(data) / dsize
-    ii = u.Identity(cov_op.shape[0])
     if regularize_covariances:
-      cov_op = cov_op + Lambda*ii
+      #ii = u.Identity(cov_op.shape[0])
+      #regularizer = Lambda*ii
+      regularizer = u.cachedGpuIdentityRegularizer(cov_op.shape[0],
+                                                   Lambda=u.args.Lambda)
+      cov_op = cov_op + regularizer
       
     cov_name = "%s_cov_%s" %(prefix, var.op.name)
     svd_name = "%s_svd_%s" %(prefix, var.op.name)
@@ -232,9 +236,9 @@ class Covariance():
                             do_inverses=(inverse_method=='inverse'))
     #    self.cov_update_op = self.cov.initializer
     if pp<1:
-      self.cov_update_op = self.cov.assign(cov_op*(1-pp)+self.cov*pp)
+      self.cov_update_op = self.cov.assign(cov_op*(1-pp)+self.cov*pp).op
     else:
-      self.cov_update_op = self.cov.assign(cov_op)
+      self.cov_update_op = self.cov.assign(cov_op).op
 
 
 class KfacCorrectionInfo():
@@ -405,13 +409,15 @@ class Kfac():
     ops = []
 
     # update covariances
-    s.grad.update()   # TODO: not needed
-    s.grad2.update()
+    #    s.grad.update()   # TODO: not needed
+    #    s.grad2.update()
     
     for var in s:
       ops.append(s[var].A.cov_update_op)
       ops.append(s[var].B2.cov_update_op)
-    s.run(ops)
+
+    with u.timeit("covariances"):
+      u.run(ops)
 
     # update SVDs
     corrected_vars = list(s)

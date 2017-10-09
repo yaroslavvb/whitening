@@ -19,8 +19,17 @@ from collections import defaultdict
 util = sys.modules[__name__]   
 u = util
 
+# for line profiling
+try:
+  profile  # throws an exception when profile isn't defined
+except NameError:
+  profile = lambda x: x   # if it's not defined simply ignore the decorator.
 
-default_dtype = tf.float32
+
+default_tf_dtype = tf.float32
+default_np_dtype = np.float32
+default_dtype = default_tf_dtype
+
 USE_MKL_SVD=True                   # Tensorflow vs MKL SVD
 DUMP_BAD_SVD=False                 # when SVD fails, dump matrix to temp
 
@@ -208,7 +217,6 @@ def pseudo_inverse_scipy(tensor):
                         [dtype])[0]
     result.set_shape(tensor.shape)
     return result
-  
   
 
 def Identity(n, dtype=None, name=None):
@@ -618,9 +626,10 @@ def record_time():
   new_time = time.perf_counter()
   global_time_list.append(new_time - global_last_time)
   global_last_time = time.perf_counter()
-  print("step: %.2f"%(global_time_list[-1]*1000))
+  #print("step: %.2f"%(global_time_list[-1]*1000))
 
 def last_time():
+  """Returns last interval records in millis."""
   global global_last_time, global_time_list
   if global_time_list:
     return 1000*global_time_list[-1]
@@ -751,7 +760,6 @@ class timeit:
     self.end = time.perf_counter()
     interval_ms = 1000*(self.end - self.start)
     global_timeit_dict.setdefault(self.tag, []).append(interval_ms)
-    print("    %s Elapsed: %.2f ms"%(self.tag, interval_ms))
     logger = u.get_last_logger(skip_existence_check=True)
     if logger:
       newtag = 'time/'+self.tag
@@ -921,7 +929,8 @@ class SvdWrapper:
   def update_tf(self):
     sess = u.get_default_session()
     sess.run(self.update_tf_op)
-    
+
+  @profile
   def update_scipy(self):
     if self.do_inverses:
       return self.update_scipy_inv()
@@ -1254,6 +1263,99 @@ def eval(tensor):
   global sess
   assert sess
   return sess.run(tensor)
+
+def run(fetches):
+  return u.eval(fetches)
+  
+timeline_counter = 0
+run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+def traced_run(fetches):
+  """Runs fetches, dumps timeline files in current directory."""
+  global sess
+  assert sess
+  global timeline_counter
+  run_metadata = tf.RunMetadata()
+
+  root = os.getcwd()+"/data"
+  from tensorflow.python.client import timeline
+
+  results = sess.run(fetches,
+                     options=run_options,
+                     run_metadata=run_metadata);
+  tl = timeline.Timeline(step_stats=run_metadata.step_stats)
+  ctf = tl.generate_chrome_trace_format(show_memory=True,
+                                          show_dataflow=False)
+  open(root+"/timeline_%d.json"%(timeline_counter,), "w").write(ctf)
+  open(root+"/stepstats_%d.pbtxt"%(timeline_counter,), "w").write(str(
+    run_metadata.step_stats))
+  timeline_counter+=1
+  return results  
+
+def get_mnist_images(fold='train', dtype=np.float32):
+  import gzip
+  from tensorflow.contrib.learn.python.learn.datasets import base
+  import numpy
+  
+  def extract_images(f):
+    """Extract the images into a 4D uint8 numpy array [index, y, x, depth].
+    Args:
+      f: A file object that can be passed into a gzip reader.
+    Returns:
+      data: A 4D uint8 numpy array [index, y, x, depth].
+    Raises:
+      ValueError: If the bytestream does not start with 2051.
+    """
+    print('Extracting', f.name) # todo: remove
+    with gzip.GzipFile(fileobj=f) as bytestream:
+      magic = _read32(bytestream)
+      if magic != 2051:
+        raise ValueError('Invalid magic number %d in MNIST image file: %s' %
+                         (magic, f.name))
+      num_images = _read32(bytestream)
+      rows = _read32(bytestream)
+      cols = _read32(bytestream)
+      buf = bytestream.read(rows * cols * num_images)
+      data = numpy.frombuffer(buf, dtype=numpy.uint8)
+      data = data.reshape(num_images, rows, cols, 1)
+      return data
+
+  def _read32(bytestream):
+    dt = numpy.dtype(numpy.uint32).newbyteorder('>')
+    return numpy.frombuffer(bytestream.read(4), dtype=dt)[0]
+
+  if fold == 'train': # todo: rename
+    TRAIN_IMAGES = 'train-images-idx3-ubyte.gz'
+  elif fold == 'test':
+    TRAIN_IMAGES = 't10k-images-idx3-ubyte.gz'
+  else:
+    assert False, 'unknown fold %s'%(fold)
+    
+  source_url = 'https://storage.googleapis.com/cvdf-datasets/mnist/'
+  local_file = base.maybe_download(TRAIN_IMAGES, '/tmp',
+                                     source_url + TRAIN_IMAGES)
+  train_images = extract_images(open(local_file, 'rb'))
+  dsize = train_images.shape[0]
+  if fold == 'train':
+    assert dsize == 60000
+  else:
+    assert dsize == 10000
+  
+  train_images = train_images.reshape(dsize, 28**2).T.astype(np.float64)/255
+  return train_images.astype(dtype)
+
+regularizer_cache = {}
+def cachedGpuIdentityRegularizer(n, Lambda):
+  global regularizer_cache
+
+  n = int(n)
+  if (n, Lambda) not in regularizer_cache:
+    numpy_diag = Lambda*np.diag(np.ones([n]))
+    numpy_diag = numpy_diag.astype(default_np_dtype)
+    with tf.device("/gpu:0"):
+      regularizer_cache[(n, Lambda)] = tf.constant(numpy_diag)
+      
+  return regularizer_cache[(n, Lambda)]
+
     
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])

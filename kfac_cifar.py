@@ -23,11 +23,19 @@ from util import t  # transpose
 use_tikhonov=False
 
 # Test generation releases
-release_name='kfac_cifar'  #  broken, in tests was 294.863098 after 10 steps, now 350.697174
-release_name='kfac_mnist'  # release name fixes a specific test set#
-#release_name='kfac_tiny'  # release name fixes a specific test set
+#release_name='kfac_cifar'  #  broken, in tests was 294.863098 after 10 steps, now 350.697174
+#release_name='kfac_mnist'  # release name fixes a specific test set#
+#release_name='kfac_tiny' 
+release_name='mnist_deep'   # deep synchronous MNIST (oct_batches12)
 release_test_fn = release_name+'_losses_test.csv'
 
+# for line profiling
+try:
+  profile  # throws an exception when profile isn't defined
+except NameError:
+  profile = lambda x: x   # if it's not defined simply ignore the decorator.
+
+  
 import load_MNIST
 
 import kfac as kfac_lib
@@ -44,8 +52,6 @@ import numpy as np
 # TODO: get rid of this
 purely_linear = False  # convert sigmoids into linear nonlinearities
 purely_relu = True     # convert sigmoids into ReLUs
-
-regularized_svd = True # kfac_lib.regularized_svd # TODO: delete this
 
 
 # TODO: get rid
@@ -208,34 +214,28 @@ def model_creator(batch_size, name="default", dtype=np.float32):
     backprop2 = t(W[i+1]) @ B2[i+1]
     B2[i] = backprop2*d_nonlin(A[i+1])
 
-  cov_A = [None]*(n+1)    # covariance of activations[i]
-  cov_B2 = [None]*(n+1)   # covariance of synthetic backprops[i]
-  vars_svd_A = [None]*(n+1)
-  vars_svd_B2 = [None]*(n+1)
-  dW = [None]*(n+1)
-  dW2 = [None]*(n+1)
-  pre_dW = [None]*(n+1)   # preconditioned dW
+  # cov_A = [None]*(n+1)    # covariance of activations[i]
+  # cov_B2 = [None]*(n+1)   # covariance of synthetic backprops[i]
+#  vars_svd_A = [None]*(n+1)
+#  vars_svd_B2 = [None]*(n+1)
+#  dW = [None]*(n+1)
+#  pre_dW = [None]*(n+1)   # preconditioned dW
   # todo: decouple initial value from covariance update
-  # maybe need start with identity and do running average
-  for i in range(1,n+1):
-    if regularized_svd:
-      cov_A[i] = init_var(A[i]@t(A[i])/args.batch_size+args.Lambda*u.Identity(f(i-1)), "cov_A%d"%(i,))
-      cov_B2[i] = init_var(B2[i]@t(B2[i])/args.batch_size+args.Lambda*u.Identity(f(i)), "cov_B2%d"%(i,))
-    else:
-      cov_A[i] = init_var(A[i]@t(A[i])/args.batch_size, "cov_A%d"%(i,))
-      cov_B2[i] = init_var(B2[i]@t(B2[i])/args.batch_size, "cov_B2%d"%(i,))
-    vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,))
-    vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,))
-    if use_tikhonov:
-      whitened_A = u.regularized_inverse3(vars_svd_A[i],L=args.Lambda) @ A[i]
-      whitened_B2 = u.regularized_inverse3(vars_svd_B2[i],L=args.Lambda) @ B[i]
-    else:
-      whitened_A = u.pseudo_inverse2(vars_svd_A[i]) @ A[i]
-      whitened_B2 = u.pseudo_inverse2(vars_svd_B2[i]) @ B[i]
+  # # maybe need start with identity and do running average
+  # for i in range(1,n+1):
+  #   if regularized_svd:
+  #     cov_A[i] = init_var(A[i]@t(A[i])/args.batch_size+args.Lambda*u.Identity(f(i-1)), "cov_A%d"%(i,))
+  #     cov_B2[i] = init_var(B2[i]@t(B2[i])/args.batch_size+args.Lambda*u.Identity(f(i)), "cov_B2%d"%(i,))
+  #   else:
+  #     cov_A[i] = init_var(A[i]@t(A[i])/args.batch_size, "cov_A%d"%(i,))
+  #     cov_B2[i] = init_var(B2[i]@t(B2[i])/args.batch_size, "cov_B2%d"%(i,))
+#    vars_svd_A[i] = u.SvdWrapper(cov_A[i],"svd_A_%d"%(i,), do_inverses=False)
+#    vars_svd_B2[i] = u.SvdWrapper(cov_B2[i],"svd_B2_%d"%(i,), do_inverses=False)
     
-    dW[i] = (B[i] @ t(A[i]))/args.batch_size
-    dW2[i] = B[i] @ t(A[i])
-    pre_dW[i] = (whitened_B2 @ t(whitened_A))/args.batch_size
+#    whitened_A = u.cached_inverse(vars_svd_A[i], args.Lambda) @ A[i]
+#    whitened_B = u.cached_inverse(vars_svd_B2[i], args.Lambda) @ B[i]
+#    dW[i] = (B[i] @ t(A[i]))/args.batch_size
+#    pre_dW[i] = (whitened_B @ t(whitened_A))/args.batch_size
 
     
   sampled_labels_live = A[n+1] + tf.random_normal((f(n), f(-1)),
@@ -259,13 +259,12 @@ def model_creator(batch_size, name="default", dtype=np.float32):
   advance_batch_op = X.assign(X_full[:,start_idx:start_idx + args.batch_size])
   
   def advance_batch():
-    print("Step for model(%s) is %s"%(model.name, u.eval(model.step)))
+    #    print("Step for model(%s) is %s"%(model.name, u.eval(model.step)))
     sess = u.get_default_session()
     # TODO: get rid of _sampled_labels
     sessrun([sampled_labels.initializer, _sampled_labels.initializer])
     if args.advance_batch:
-      with u.timeit("advance_batch"):
-        sessrun(advance_batch_op)
+      sessrun(advance_batch_op)
     sessrun(advance_step_op)
     
   model.advance_batch = advance_batch
@@ -320,7 +319,7 @@ def model_creator(batch_size, name="default", dtype=np.float32):
 
   return model
 
-#@profile
+@profile
 def main():
   np.random.seed(args.seed)
   tf.set_random_seed(args.seed)
@@ -344,7 +343,8 @@ def main():
                                   rewrite_options=rewrite_options)
     gpu_options = tf.GPUOptions(allow_growth=False)
     config = tf.ConfigProto(graph_options=graph_options,
-                            gpu_options=gpu_options)
+                            gpu_options=gpu_options,
+                            log_device_placement=False)
 
     sess = tf.InteractiveSession(config=config)
     u.register_default_session(sess)   # since default session is Thread-local
@@ -384,7 +384,6 @@ def main():
 
   # todo, unify the two data outputs
   outfn = 'data/%s_%f_%f.csv'%(args.run, args.lr, args.Lambda)
-  writer = u.BufferedWriter(outfn, 60)   # get rid?
 
   start_time = time.time()
   if args.extra_kfac_batch_advance:
@@ -404,9 +403,9 @@ def main():
     logger('loss/loss', loss0, 'loss/vloss', vloss0)
     
     elapsed = time.time()-start_time
-    print("%d sec, step %d, loss %.2f, vloss %.2f" %(elapsed, step, loss0,
-                                                     vloss0))
-    writer.write('%d, %f, %f, %f\n'%(step, elapsed, loss0, vloss0))
+    start_time = time.time()
+    print("%4d ms, step %4d, loss %5.2f, vloss %5.2f" %(elapsed*1e3, step,
+                                                        loss0, vloss0))
 
     if args.method=='kfac' and not args.kfac_async:
       kfac.model.advance_batch()
@@ -414,10 +413,11 @@ def main():
 
     with u.timeit("train"):
       model.advance_batch()
-      grad.update()
+      with u.timeit("grad.update"):
+        grad.update()
       with kfac.read_lock():
         grad_new.update()
-      train_op.run()
+      u.run(train_op)
       u.record_time()
 
     logger.next_step()
@@ -437,7 +437,7 @@ def main():
     targets = np.loadtxt('data/'+release_test_fn, delimiter=",")
     u.check_equal(losses, targets, rtol=1e-2)
     u.summarize_difference(losses, targets)
-
+    assert u.last_time()<800, "Expected 648 on GTX 1080"
 
 if __name__ == '__main__':
 
@@ -508,6 +508,13 @@ if __name__ == '__main__':
       args.batch_size = 100
       args.kfac_batch_size = 100
       args.dataset_size = args.batch_size
+    elif release_name == 'mnist_deep':
+      args.num_steps = 5
+      args.advance_batch = 1
+      args.extra_kfac_batch_advance = 1
+      args.batch_size = 10000
+      args.dataset = 'mnist'
+      
 
     rundir = u.setup_experiment_run_directory(args.run)
     with open(rundir+'/args.txt', 'w') as f:
@@ -529,18 +536,8 @@ if __name__ == '__main__':
     train_images = X_train.T  # batch first
     test_images = X_test.T
   elif args.dataset == 'mnist':
-    train_images = load_MNIST.load_MNIST_images('data/train-images-idx3-ubyte').astype(np.float32)
-    # todo: load test images from separate file like with cifar
-    # todo: remove this extra truncation since it happens later
-    #  test_patches = train_images[:,-args.dataset_size:]
-    test_images = load_MNIST.load_MNIST_images('data/t10k-images-idx3-ubyte').astype(np.float32)
-
-    X_train = train_images[:,:args.dataset_size].T   # batch last
-    X_test = test_images.T # test_patches.T
-
-
-    # todo: rename to better names
-    train_images = X_train.T  # batch first
-    test_images = X_test.T
+    train_images = u.get_mnist_images('train')
+    test_images = u.get_mnist_images('test')
+    train_images = train_images[:,:args.dataset_size]  # batch first
 
   main()
