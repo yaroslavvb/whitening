@@ -1291,7 +1291,7 @@ def traced_run(fetches):
   timeline_counter+=1
   return results  
 
-def get_mnist_images(fold='train', dtype=np.float32):
+def get_mnist_images(fold='train'):
   import gzip
   from tensorflow.contrib.learn.python.learn.datasets import base
   import numpy
@@ -1341,7 +1341,7 @@ def get_mnist_images(fold='train', dtype=np.float32):
     assert dsize == 10000
   
   train_images = train_images.reshape(dsize, 28**2).T.astype(np.float64)/255
-  return train_images.astype(dtype)
+  return train_images.astype(default_np_dtype)
 
 regularizer_cache = {}
 def cachedGpuIdentityRegularizer(n, Lambda):
@@ -1356,6 +1356,12 @@ def cachedGpuIdentityRegularizer(n, Lambda):
       
   return regularizer_cache[(n, Lambda)]
 
-    
+# helper utilities
+def ng_init(s1, s2): # uniform weight init from Ng UFLDL
+  r = np.sqrt(6) / np.sqrt(s1 + s2 + 1)
+  flat = np.random.random(s1*s2)*2*r-r
+  return flat.reshape([s1, s2]).astype(default_np_dtype)
+
+
 if __name__=='__main__':
   run_all_tests(sys.modules[__name__])
